@@ -1,22 +1,71 @@
 /// <reference types="@types/lodash" />
 
-var l = console.log.bind(console)
+const l = console.log.bind(console)
+const shipRadius = 1
 
-var STATE = {}
+/**
+ * @typedef {[number, number]} Vector
+ */
+
+/**
+ * @typedef {object} Ship
+ * @prop {number} mass
+ * @prop {Vector} location
+ * @prop {Vector} velocity
+ * @prop {number} angle
+ * @prop {number} angularVelocity
+ * @prop {boolean} thrusting
+ * @prop {boolean} landed
+ * @prop {boolean} takingOff
+ * @prop {boolean} destroyed
+ * @prop {number} destroyedFor
+ */
+
+/**
+ * @typedef {object} System
+ * @prop {number} mass
+ * @prop {number} orbitRadius
+ * @prop {System[]} [children]
+ */
+
+/**
+ * @typedef {object} SystemBody
+ * @prop {number} mass
+ * @prop {Vector} location
+ * @prop {Vector} velocity
+ */
+
+/**
+ * @typedef {object} State
+ * @prop {number}
+ * @prop {number} time
+ * @prop {number} timeInc
+ * @prop {number} zoom
+ * @prop {SystemBody[]} bodies
+ * @prop {Ship} ship
+ */
+
+/** @type {State} */
+const STATE = {}
 
 function getTotalMass(bodies) {
-  return bodies.reduce(function (memo, body) {
+  return bodies.reduce((memo, body) => {
     return memo + body.mass
   }, 0)
 }
 
 function getOrbitVelocity(parentMass, childMass, radius) {
-  var force = getGravityForce(parentMass, childMass, radius)
+  const force = getGravityForce(parentMass, childMass, radius)
   return Math.sqrt((force / childMass) * radius)
 }
 
+/**
+ * @param {System} system
+ * @param {number} time
+ * @returns {SystemBody[]}
+ */
 function getSystemBodies(system, time) {
-  var bodies = [
+  const bodies = [
     {
       mass: system.mass,
       location: [0, 0],
@@ -24,9 +73,9 @@ function getSystemBodies(system, time) {
     },
   ]
   if (system.children) {
-    system.children.forEach(function (child) {
+    system.children.forEach((child) => {
       // Calculate child location
-      var childBodies = getSystemBodies(child, time)
+      const childBodies = getSystemBodies(child, time)
       if (!child.orbitVelocity) {
         child.orbitVelocity = getOrbitVelocity(
           system.mass,
@@ -38,16 +87,16 @@ function getSystemBodies(system, time) {
       // diameter = 2 * PI * radiusPx
       // rotation/time = velocity / diameter
       // angle/time = velocity / radius
-      var childAngle = (child.orbitVelocity / child.orbitRadius) * time
-      var childLocation = [
+      const childAngle = (child.orbitVelocity / child.orbitRadius) * time
+      const childLocation = [
         Math.cos(childAngle) * child.orbitRadius,
         Math.sin(childAngle) * child.orbitRadius,
       ]
-      var childVelocity = [
+      const childVelocity = [
         Math.sin(childAngle) * -child.orbitVelocity,
         Math.cos(childAngle) * child.orbitVelocity,
       ]
-      childBodies.forEach(function (body) {
+      childBodies.forEach((body) => {
         body.location = translate(body.location, childLocation)
         body.velocity = translate(body.velocity, childVelocity)
         if (body.orbitCenter) {
@@ -66,7 +115,11 @@ function getSystemBodies(system, time) {
 }
 
 function clearCanvas() {
-  ctx.fillRect(0, 0, canvas.clientWidth, canvas.clientHeight)
+  const width = window.innerWidth * devicePixelRatio
+  const height = window.innerHeight * devicePixelRatio
+  canvas.width = width
+  canvas.height = height
+  ctx.fillRect(0, 0, width, height)
 }
 
 function drawCircle(x, y, r, style) {
@@ -77,10 +130,10 @@ function drawCircle(x, y, r, style) {
 }
 
 function drawStar(x, y, r, points, depth, style) {
-  var lines = points * 2
+  const lines = points * 2
   ctx.beginPath()
   ctx.moveTo(x, y + r)
-  for (var i = 0; i <= lines; i++) {
+  for (let i = 0; i <= lines; i++) {
     ctx.lineTo(
       x + Math.sin((Math.PI * 2 * i) / lines) * r * (i % 2 ? depth : 1),
       y + Math.cos((Math.PI * 2 * i) / lines) * r * (i % 2 ? depth : 1)
@@ -90,47 +143,106 @@ function drawStar(x, y, r, points, depth, style) {
   ctx.stroke()
 }
 
+/**
+ * @param {SystemBody} body
+ * @param {SystemBody[]} bodies
+ * @returns {Vector}
+ */
 function getForceOn(body, bodies) {
   return bodies.reduce(
-    function (memo, otherBody) {
+    (memo, otherBody) => {
       if (body === otherBody) {
         return memo
       }
-      var force = getForceBetween(body, otherBody)
+      const force = getForceBetween(body, otherBody)
       return [memo[0] + force[0], memo[1] + force[1]]
     },
     [0, 0]
   )
 }
 
-function getDistance(a, b) {
+/**
+ * @param {Vector} a
+ * @param {Vector} b
+ * @returns {number}
+ */
+function getDifference(a, b) {
   return Math.sqrt(
-    Math.pow(getDistanceX(a, b), 2) + Math.pow(getDistanceY(a, b), 2)
+    Math.pow(getDifferenceX(a, b), 2) + Math.pow(getDifferenceY(a, b), 2)
   )
 }
 
-function getDistanceX(a, b) {
+/**
+ * @param {Vector} a
+ * @param {Vector} b
+ * @returns {number}
+ */
+function getDifferenceX(a, b) {
   return b[0] - a[0]
 }
 
-function getDistanceY(a, b) {
+/**
+ * @param {Vector} a
+ * @param {Vector} b
+ * @returns {number}
+ */
+function getDifferenceY(a, b) {
   return b[1] - a[1]
 }
 
+/**
+ * @param {Vector} a
+ * @param {Vector} b
+ * @returns {number}
+ */
 function getAngle(a, b) {
   return Math.atan2(a[0] - b[0], a[1] - b[1])
 }
 
+/**
+ * @param {number} angle
+ * @param {number} distance
+ * @returns {Vector}
+ */
+function getAngleVector(angle, distance) {
+  return [Math.sin(angle) * distance, Math.cos(angle) * distance]
+}
+
+/**
+ * @param {number} a
+ * @param {number} b
+ * @returns {number}
+ */
+function getAngleDifference(a, b) {
+  const diff = (b - a) % (Math.PI * 2)
+  if (diff > Math.PI) {
+    return diff - Math.PI * 2
+  } else if (diff < -Math.PI) {
+    return diff + Math.PI * 2
+  }
+  return diff
+}
+
+/**
+ * @param {number} massA
+ * @param {number} massB
+ * @returns {number}
+ */
 function getGravityForce(massA, massB, distance) {
   return (massA * massB) / Math.pow(distance, 2)
 }
 
+/**
+ * @param {SystemBody} a
+ * @param {SystemBody} b
+ * @returns {Vector}
+ */
 function getForceBetween(a, b) {
-  var distance = getDistance(a.location, b.location)
-  var force = getGravityForce(a.mass, b.mass, distance)
+  const distance = getDifference(a.location, b.location)
+  const force = getGravityForce(a.mass, b.mass, distance)
   return [
-    (force * getDistanceX(a.location, b.location)) / distance,
-    (force * getDistanceY(a.location, b.location)) / distance,
+    (force * getDifferenceX(a.location, b.location)) / distance,
+    (force * getDifferenceY(a.location, b.location)) / distance,
   ]
 }
 
@@ -147,6 +259,52 @@ function tick() {
 
   STATE.bodies = getSystemBodies(SYSTEM, STATE.time)
 
+  /** @type {SystemBody} */
+  const nearestBody = _.minBy(STATE.bodies, (body) => {
+    return getDifference(body.location, STATE.ship.location)
+  })
+
+  if (STATE.ship.destroyed) {
+    // Increment destroyed counter
+    STATE.ship.destroyedFor += STATE.timeInc
+    // Slowly decrease velocity (and player view)
+    STATE.ship.velocity = scale(STATE.ship.velocity, 0.99)
+  } else if (!STATE.ship.landed) {
+    // Apply gravity to ship
+    STATE.ship.velocity = translate(
+      STATE.ship.velocity,
+      scale(
+        getForceOn(STATE.ship, STATE.bodies),
+        STATE.timeInc / STATE.ship.mass
+      )
+    )
+
+    // Check for collision
+    if (
+      getBodyRadius(nearestBody) >
+      getDifference(nearestBody.location, STATE.ship.location) - shipRadius
+    ) {
+      const velocity = getDifference(nearestBody.velocity, STATE.ship.velocity)
+      const approachAngle = getAngle(STATE.ship.location, nearestBody.location)
+      const angleDiff = Math.abs(
+        getAngleDifference(STATE.ship.angle, approachAngle)
+      )
+      if (
+        velocity < 10 &&
+        angleDiff < 0.5 &&
+        Math.abs(STATE.ship.angularVelocity) < 2 &&
+        !STATE.ship.thrusting
+      ) {
+        STATE.ship.landed = true
+        STATE.ship.angle = approachAngle
+        STATE.ship.angularVelocity = 0
+      } else {
+        STATE.ship.destroyed = true
+        STATE.ship.destroyedFor = 0
+      }
+    }
+  }
+
   // Handle keys
   if (KEYS["="]) {
     // Zoom in
@@ -159,69 +317,50 @@ function tick() {
   if (KEYS["ArrowUp"] && !STATE.ship.destroyed) {
     // Thrust
     STATE.ship.thrusting = true
-    STATE.ship.velocity = translate(STATE.ship.velocity, [
-      Math.sin(STATE.ship.angle) * 0.1,
-      Math.cos(STATE.ship.angle) * 0.1,
-    ])
+    STATE.ship.landed = false
+    STATE.ship.velocity = translate(
+      STATE.ship.velocity,
+      getAngleVector(STATE.ship.angle, 0.1)
+    )
   } else {
     STATE.ship.thrusting = false
   }
-  if (KEYS["ArrowLeft"]) {
+  if (KEYS["ArrowLeft"] && !STATE.ship.landed) {
     // Left
-    STATE.ship.angle += 0.1
+    STATE.ship.angularVelocity += 0.1
   }
-  if (KEYS["ArrowRight"]) {
+  if (KEYS["ArrowRight"] && !STATE.ship.landed) {
     // Right
-    STATE.ship.angle -= 0.1
-  }
-
-  if (STATE.ship.destroyed) {
-    // Increment destroyed counter
-    STATE.ship.destroyedFor += STATE.timeInc
-    // Slowly decrease velocity (and player view)
-    STATE.ship.velocity = scale(STATE.ship.velocity, 0.99)
-  } else {
-    // Apply gravity to ship
-    STATE.ship.velocity = translate(
-      STATE.ship.velocity,
-      scale(
-        getForceOn(STATE.ship, STATE.bodies),
-        STATE.timeInc / STATE.ship.mass
-      )
-    )
-
-    // Check for collision
-    var nearestBody = _.minBy(STATE.bodies, function (body) {
-      return getDistance(body.location, STATE.ship.location)
-    })
-    if (
-      getBodyRadius(nearestBody) >
-      getDistance(nearestBody.location, STATE.ship.location) - 1
-    ) {
-      STATE.ship.destroyed = true
-      STATE.ship.destroyedFor = 0
-    }
-
-    // How to land...? I want actual physics...
+    STATE.ship.angularVelocity -= 0.1
   }
 
   // Move ship
-  STATE.ship.location = translate(
-    STATE.ship.location,
-    scale(STATE.ship.velocity, STATE.timeInc)
-  )
+  if (STATE.ship.landed) {
+    STATE.ship.location = translate(
+      nearestBody.location,
+      getAngleVector(STATE.ship.angle, getBodyRadius(nearestBody) + shipRadius)
+    )
+    STATE.ship.velocity = nearestBody.velocity
+  } else {
+    STATE.ship.location = translate(
+      STATE.ship.location,
+      scale(STATE.ship.velocity, STATE.timeInc)
+    )
+    STATE.ship.angle += STATE.ship.angularVelocity * STATE.timeInc
+    STATE.ship.angle %= Math.PI * 2
+  }
 }
 
 function draw(shapes) {
-  shapes.forEach(function (shape) {
+  shapes.forEach((shape) => {
     if (shape.type == "circle") {
       ctx.beginPath()
       ctx.arc(
-        shape.center[0],
-        shape.center[1],
-        shape.radius,
+        shape.center[0] * devicePixelRatio,
+        shape.center[1] * devicePixelRatio,
+        shape.radius * devicePixelRatio,
         0,
-        Math.PI * 2,
+        Math.PI * 2 * devicePixelRatio,
         shape.filled
       )
       ctx.strokeStyle = shape.strokeStyle
@@ -229,8 +368,11 @@ function draw(shapes) {
     }
     if (shape.type == "line") {
       ctx.beginPath()
-      for (var i = 0; i < shape.points.length; i++) {
-        ctx.lineTo(shape.points[i][0], shape.points[i][1])
+      for (let i = 0; i < shape.points.length; i++) {
+        ctx.lineTo(
+          shape.points[i][0] * devicePixelRatio,
+          shape.points[i][1] * devicePixelRatio
+        )
       }
       ctx.strokeStyle = shape.strokeStyle
       ctx.stroke()
@@ -243,12 +385,12 @@ function translate(xy, by) {
 }
 
 function translateShapes(shapes, by) {
-  return shapes.map(function (shape) {
+  return shapes.map((shape) => {
     if (shape.type == "circle") {
       shape.center = translate(shape.center, by)
     }
     if (shape.type == "line") {
-      shape.points = shape.points.map(function (point) {
+      shape.points = shape.points.map((point) => {
         return translate(point, by)
       })
     }
@@ -261,13 +403,13 @@ function scale(xy, factor) {
 }
 
 function scaleShapes(shapes, factor) {
-  return shapes.map(function (shape) {
+  return shapes.map((shape) => {
     if (shape.type == "circle") {
       shape.center = scale(shape.center, factor)
       shape.radius = shape.radius * factor
     }
     if (shape.type == "line") {
-      shape.points = shape.points.map(function (point) {
+      shape.points = shape.points.map((point) => {
         return scale(point, factor)
       })
     }
@@ -276,8 +418,8 @@ function scaleShapes(shapes, factor) {
 }
 
 function rotate(xy, about, angle) {
-  var distance = getDistance(xy, about)
-  var currentAngle = getAngle(xy, about)
+  const distance = getDifference(xy, about)
+  const currentAngle = getAngle(xy, about)
   return [
     about[0] + Math.sin(currentAngle + angle) * distance,
     about[1] + Math.cos(currentAngle + angle) * distance,
@@ -285,12 +427,12 @@ function rotate(xy, about, angle) {
 }
 
 function rotateShapes(shapes, about, angle) {
-  return shapes.map(function (shape) {
+  return shapes.map((shape) => {
     if (shape.type == "circle") {
       shape.center = rotate(shape.center, about, angle)
     }
     if (shape.type == "line") {
-      shape.points = shape.points.map(function (point) {
+      shape.points = shape.points.map((point) => {
         return rotate(point, about, angle)
       })
     }
@@ -299,7 +441,8 @@ function rotateShapes(shapes, about, angle) {
 }
 
 function drawShip(ship) {
-  var shapes = []
+  const shapes = []
+
   if (ship.destroyed) {
     // Circle that gets bigger and transitions from yellow to red/transparent
     shapes.push({
@@ -339,6 +482,7 @@ function drawShip(ship) {
       strokeStyle: "#33f",
     })
   }
+
   return translateShapes(
     scaleShapes(rotateShapes(shapes, [0, 0], Math.PI + ship.angle), 1),
     ship.location
@@ -346,10 +490,10 @@ function drawShip(ship) {
 }
 
 function renderWorld() {
-  var shapes = []
+  const shapes = []
 
   // Orbit rings
-  STATE.bodies.forEach(function (body) {
+  STATE.bodies.forEach((body) => {
     if (body.orbitCenter) {
       shapes.push({
         type: "circle",
@@ -361,7 +505,7 @@ function renderWorld() {
   })
 
   // Bodies
-  STATE.bodies.forEach(function (body) {
+  STATE.bodies.forEach((body) => {
     shapes.push({
       type: "circle",
       center: body.location,
@@ -371,7 +515,7 @@ function renderWorld() {
   })
 
   // Ship
-  shapes = shapes.concat(drawShip(STATE.ship))
+  shapes.push(...drawShip(STATE.ship))
 
   draw(
     translateShapes(
@@ -394,23 +538,23 @@ function render() {
 }
 
 // Prepare canvas
-var canvas = document.createElement("canvas")
-canvas.width = window.innerWidth
-canvas.height = window.innerHeight
+const canvas = document.createElement("canvas")
 document.body.appendChild(canvas)
-var ctx = canvas.getContext("2d")
+const ctx = canvas.getContext("2d")
 
 // Set event listeners
-var KEYS = {}
-document.onkeydown = function (e) {
+const KEYS = {}
+document.addEventListener("keydown", (e) => {
   KEYS[e.key] = true
-}
-document.onkeyup = function (e) {
+})
+document.addEventListener("keyup", (e) => {
   KEYS[e.key] = false
-}
+})
 
-var SYSTEM = {
+/** @type {System} */
+const SYSTEM = {
   mass: 10000,
+  orbitRadius: 0,
   children: [
     {
       mass: 20,
@@ -452,21 +596,22 @@ function reset() {
   STATE.timeInc = 1 / 100
   STATE.zoom = 10
   STATE.bodies = getSystemBodies(SYSTEM, STATE.time)
-  var bodyToStartOn = STATE.bodies[_.random(STATE.bodies.length - 2) + 1]
+  const bodyToStartOn = STATE.bodies[_.random(STATE.bodies.length - 2) + 1]
   STATE.ship = {
     mass: 1,
     location: translate(bodyToStartOn.location, [
-      10,
-      -getBodyRadius(bodyToStartOn) + 10,
+      0,
+      -getBodyRadius(bodyToStartOn) - shipRadius,
     ]),
     velocity: bodyToStartOn.velocity,
     angle: Math.PI,
+    angularVelocity: 0,
     thrusting: false,
+    landed: true,
   }
 }
 
 reset()
 
 setInterval(tick, 15)
-
-render()
+requestAnimationFrame(render)
