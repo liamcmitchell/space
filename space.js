@@ -1,8 +1,5 @@
 /// <reference types="@types/lodash" />
 
-const l = console.log.bind(console)
-const shipRadius = 1
-
 /**
  * @typedef {[number, number]} Vector
  */
@@ -10,6 +7,7 @@ const shipRadius = 1
 /**
  * @typedef {object} Ship
  * @prop {number} mass
+ * @prop {number} inertia
  * @prop {Vector} location
  * @prop {Vector} velocity
  * @prop {number} angle
@@ -44,6 +42,29 @@ const shipRadius = 1
  * @prop {SystemBody[]} bodies
  * @prop {Ship} ship
  */
+
+/** @type {Vector} */
+const center = [0, 0]
+
+/** @type {Vector[]} */
+const shipBody = [
+  [0, 0],
+  [1, -1],
+  [0, 2],
+  [-1, -1],
+  [0, 0],
+]
+
+const shipRadius = Math.max(
+  ...shipBody.map((point) => getDistance(point, center))
+)
+
+/** @type {Vector[]} */
+const shipThrust = [
+  [-0.25, -0.25],
+  [0, -1],
+  [0.25, -0.25],
+]
 
 /** @type {State} */
 const STATE = {}
@@ -166,10 +187,27 @@ function getForceOn(body, bodies) {
  * @param {Vector} b
  * @returns {number}
  */
-function getDifference(a, b) {
+function getDistance(a, b) {
   return Math.sqrt(
     Math.pow(getDifferenceX(a, b), 2) + Math.pow(getDifferenceY(a, b), 2)
   )
+}
+
+/**
+ * @param {Vector} v
+ * @returns {number}
+ */
+function getMagnitude(v) {
+  return Math.sqrt(Math.pow(v[0], 2) + Math.pow(v[1], 2))
+}
+
+/**
+ * @param {Vector} a
+ * @param {Vector} b
+ * @returns {Vector}
+ */
+function getDifference(a, b) {
+  return [b[0] - a[0], b[1] - a[1]]
 }
 
 /**
@@ -238,7 +276,7 @@ function getGravityForce(massA, massB, distance) {
  * @returns {Vector}
  */
 function getForceBetween(a, b) {
-  const distance = getDifference(a.location, b.location)
+  const distance = getDistance(a.location, b.location)
   const force = getGravityForce(a.mass, b.mass, distance)
   return [
     (force * getDifferenceX(a.location, b.location)) / distance,
@@ -250,60 +288,16 @@ function getBodyRadius(body) {
   return Math.pow(((body.mass / Math.PI) * 3) / 2, 1 / 3)
 }
 
-function tick() {
-  if (STATE.ship.destroyed && STATE.ship.destroyedFor > 4) {
+function tick(force) {
+  STATE.rendered = false
+
+  if (STATE.ship.destroyed && STATE.ship.destroyedFor > 2) {
     reset()
   }
 
   STATE.time += STATE.timeInc
 
   STATE.bodies = getSystemBodies(SYSTEM, STATE.time)
-
-  /** @type {SystemBody} */
-  const nearestBody = _.minBy(STATE.bodies, (body) => {
-    return getDifference(body.location, STATE.ship.location)
-  })
-
-  if (STATE.ship.destroyed) {
-    // Increment destroyed counter
-    STATE.ship.destroyedFor += STATE.timeInc
-    // Slowly decrease velocity (and player view)
-    STATE.ship.velocity = scale(STATE.ship.velocity, 0.99)
-  } else if (!STATE.ship.landed) {
-    // Apply gravity to ship
-    STATE.ship.velocity = translate(
-      STATE.ship.velocity,
-      scale(
-        getForceOn(STATE.ship, STATE.bodies),
-        STATE.timeInc / STATE.ship.mass
-      )
-    )
-
-    // Check for collision
-    if (
-      getBodyRadius(nearestBody) >
-      getDifference(nearestBody.location, STATE.ship.location) - shipRadius
-    ) {
-      const velocity = getDifference(nearestBody.velocity, STATE.ship.velocity)
-      const approachAngle = getAngle(STATE.ship.location, nearestBody.location)
-      const angleDiff = Math.abs(
-        getAngleDifference(STATE.ship.angle, approachAngle)
-      )
-      if (
-        velocity < 10 &&
-        angleDiff < 0.5 &&
-        Math.abs(STATE.ship.angularVelocity) < 2 &&
-        !STATE.ship.thrusting
-      ) {
-        STATE.ship.landed = true
-        STATE.ship.angle = approachAngle
-        STATE.ship.angularVelocity = 0
-      } else {
-        STATE.ship.destroyed = true
-        STATE.ship.destroyedFor = 0
-      }
-    }
-  }
 
   // Handle keys
   if (KEYS["="]) {
@@ -334,23 +328,144 @@ function tick() {
     STATE.ship.angularVelocity -= 0.1
   }
 
+  if (STATE.ship.destroyed) {
+    // Increment destroyed counter
+    STATE.ship.destroyedFor += STATE.timeInc
+    // Slowly decrease velocity (and player view)
+    STATE.ship.velocity = scale(STATE.ship.velocity, 0.99)
+  }
+
+  if (!STATE.ship.destroyed) {
+    // Apply gravity to ship
+    STATE.ship.velocity = translate(
+      STATE.ship.velocity,
+      scale(
+        getForceOn(STATE.ship, STATE.bodies),
+        STATE.timeInc / STATE.ship.mass
+      )
+    )
+  }
+
   // Move ship
-  if (STATE.ship.landed) {
-    STATE.ship.location = translate(
-      nearestBody.location,
-      getAngleVector(STATE.ship.angle, getBodyRadius(nearestBody) + shipRadius)
-    )
-    STATE.ship.velocity = nearestBody.velocity
-  } else {
-    STATE.ship.location = translate(
-      STATE.ship.location,
-      scale(STATE.ship.velocity, STATE.timeInc)
-    )
-    STATE.ship.angle += STATE.ship.angularVelocity * STATE.timeInc
-    STATE.ship.angle %= Math.PI * 2
+  STATE.ship.location = translate(
+    STATE.ship.location,
+    scale(STATE.ship.velocity, STATE.timeInc)
+  )
+  STATE.ship.angle += STATE.ship.angularVelocity * STATE.timeInc
+  STATE.ship.angle %= Math.PI * 2
+
+  STATE.ship.colliding = false
+  STATE.ship.landed = false
+
+  if (!STATE.ship.destroyed) {
+    for (const body of STATE.bodies) {
+      const distance = getDistance(body.location, STATE.ship.location)
+      const radius = getBodyRadius(body)
+
+      if (distance < radius + shipRadius) {
+        const points = shipBody.map((v) =>
+          translate(rotate(v, center, STATE.ship.angle), STATE.ship.location)
+        )
+        /** @type {[Vector, number][]} */
+        const contactPoints = []
+        STATE.debugShapes = []
+        for (let index = 0; index < points.length - 1; index++) {
+          const a = points[index]
+          const aDistance = getDistance(a, body.location)
+          if (aDistance < radius) {
+            contactPoints.push([a, aDistance])
+          }
+          const b = points[index + 1]
+          const length = getDistance(a, b)
+          const dot =
+            ((body.location[0] - a[0]) * (b[0] - a[0]) +
+              (body.location[1] - a[1]) * (b[1] - a[1])) /
+            Math.pow(length, 2)
+          const closest = [
+            a[0] + dot * (b[0] - a[0]),
+            a[1] + dot * (b[1] - a[1]),
+          ]
+          const closestDistance = getDistance(body.location, closest)
+          if (
+            closestDistance < radius &&
+            getDistance(a, closest) + getDistance(closest, b) < length + 0.01
+          ) {
+            contactPoints.push([closest, closestDistance])
+          }
+        }
+
+        // Process the closest points first, they have penetrated deepest.
+        contactPoints.sort((a, b) => a[1] - b[1])
+
+        for (const [point, pointBodyDistance] of contactPoints) {
+          const shipPoint = getDifference(point, STATE.ship.location)
+          const shipPointPerp = perpendicular(shipPoint)
+          const shipPointAngularVelocity = scale(
+            shipPointPerp,
+            STATE.ship.angularVelocity
+          )
+          const pointRelativeVelocity = getDifference(
+            body.velocity,
+            translate(STATE.ship.velocity, shipPointAngularVelocity)
+          )
+          const bodyPoint = getDifference(body.location, point)
+          const collisionNormal = normalize(bodyPoint)
+          const colliding = dot(collisionNormal, pointRelativeVelocity) < 0
+          STATE.ship.colliding = STATE.ship.colliding || colliding
+          if (colliding) {
+            const impulseMagnitude =
+              -dot(scale(pointRelativeVelocity, 1), collisionNormal) /
+              (dot(
+                collisionNormal,
+                scale(collisionNormal, 1 / STATE.ship.mass)
+              ) +
+                Math.pow(dot(shipPointPerp, collisionNormal), 2) /
+                  STATE.ship.inertia)
+            if (impulseMagnitude > 4) {
+              STATE.ship.destroyed = true
+              STATE.ship.destroyedFor = 0
+              return
+            }
+            STATE.ship.velocity = translate(
+              STATE.ship.velocity,
+              scale(collisionNormal, impulseMagnitude / STATE.ship.mass)
+            )
+            STATE.ship.angularVelocity +=
+              dot(shipPointPerp, scale(collisionNormal, impulseMagnitude)) /
+              STATE.ship.inertia
+            // Friction
+            const collisionPerp = perpendicular(collisionNormal)
+            const surfaceVelocity = dot(pointRelativeVelocity, collisionPerp)
+            STATE.ship.velocity = translate(
+              STATE.ship.velocity,
+              scale(collisionPerp, -surfaceVelocity / 20)
+            )
+          }
+          // Shift out of body.
+          STATE.ship.location = translate(
+            STATE.ship.location,
+            scale(collisionNormal, (radius - pointBodyDistance) / 2)
+          )
+        }
+
+        STATE.ship.landed =
+          STATE.ship.colliding &&
+          Math.abs(STATE.ship.angularVelocity) < 1 &&
+          getDistance(STATE.ship.velocity, body.velocity) < 0.5 &&
+          Math.abs(
+            getAngleDifference(
+              STATE.ship.angle,
+              getAngle(STATE.ship.location, body.location)
+            )
+          ) < 0.5
+      }
+    }
   }
 }
 
+/**
+ * @param {Shape[]} shapes
+ */
 function draw(shapes) {
   shapes.forEach((shape) => {
     if (shape.type == "circle") {
@@ -380,10 +495,39 @@ function draw(shapes) {
   })
 }
 
+/**
+ * @param {Vector} xy
+ * @param {Vector} by
+ * @returns {Vector}
+ */
 function translate(xy, by) {
   return [xy[0] + by[0], xy[1] + by[1]]
 }
 
+/**
+ * @param {Vector} v
+ * @returns {Vector}
+ */
+function normalize(v) {
+  const size = getMagnitude(v)
+  if (size === 0) return v
+  return [v[0] / size, v[1] / size]
+}
+
+/**
+ * @param {Vector} a
+ * @param {Vector} b
+ * @returns {number}
+ */
+function dot(a, b) {
+  return a[0] * b[0] + a[1] * b[1]
+}
+
+/**
+ * @param {Shape[]} shapes
+ * @param {Vector} by
+ * @returns {Shape[]}
+ */
 function translateShapes(shapes, by) {
   return shapes.map((shape) => {
     if (shape.type == "circle") {
@@ -398,10 +542,28 @@ function translateShapes(shapes, by) {
   })
 }
 
+/**
+ * @param {Vector} xy
+ * @param {number} factor
+ * @returns {Vector}
+ */
 function scale(xy, factor) {
   return [xy[0] * factor, xy[1] * factor]
 }
 
+/**
+ * @param {Vector} vector
+ * @returns {Vector}
+ */
+function perpendicular(vector) {
+  return [-vector[1], vector[0]]
+}
+
+/**
+ * @param {Shape[]} shapes
+ * @param {number} factor
+ * @returns {Shape[]}
+ */
 function scaleShapes(shapes, factor) {
   return shapes.map((shape) => {
     if (shape.type == "circle") {
@@ -417,8 +579,14 @@ function scaleShapes(shapes, factor) {
   })
 }
 
+/**
+ * @param {Vector} xy
+ * @param {Vector} about
+ * @param {number} angle
+ * @returns {Vector}
+ */
 function rotate(xy, about, angle) {
-  const distance = getDifference(xy, about)
+  const distance = getDistance(xy, about)
   const currentAngle = getAngle(xy, about)
   return [
     about[0] + Math.sin(currentAngle + angle) * distance,
@@ -426,6 +594,12 @@ function rotate(xy, about, angle) {
   ]
 }
 
+/**
+ * @param {Shape[]} shapes
+ * @param {Vector} about
+ * @param {number} angle
+ * @returns {Shape[]}
+ */
 function rotateShapes(shapes, about, angle) {
   return shapes.map((shape) => {
     if (shape.type == "circle") {
@@ -440,6 +614,28 @@ function rotateShapes(shapes, about, angle) {
   })
 }
 
+/**
+ * @typedef {object} Circle
+ * @prop {'circle'} type
+ * @prop {Vector} center
+ * @prop {number} radius
+ * @prop {string} strokeStyle
+ */
+
+/**
+ * @typedef {object} Line
+ * @prop {'line'} type
+ * @prop {Vector[]} points
+ * @prop {string} strokeStyle
+ */
+
+/**
+ * @typedef {Circle | Line} Shape
+ */
+
+/**
+ * @param {Ship} ship
+ */
 function drawShip(ship) {
   const shapes = []
 
@@ -461,36 +657,30 @@ function drawShip(ship) {
       // Yellow flame
       shapes.push({
         type: "line",
-        points: [
-          [-0.25, 0.25],
-          [0, 1],
-          [0.25, 0.25],
-        ],
+        points: shipThrust,
         strokeStyle: "#ff0",
       })
     }
     // Ship body
     shapes.push({
       type: "line",
-      points: [
-        [0, 0],
-        [1, 1],
-        [0, -2],
-        [-1, 1],
-        [0, 0],
-      ],
-      strokeStyle: "#33f",
+      points: shipBody,
+      strokeStyle: ship.landed ? "#3f3" : ship.colliding ? "#f33" : "#33f",
     })
   }
 
   return translateShapes(
-    scaleShapes(rotateShapes(shapes, [0, 0], Math.PI + ship.angle), 1),
+    rotateShapes(shapes, [0, 0], ship.angle),
     ship.location
   )
 }
 
 function renderWorld() {
   const shapes = []
+
+  STATE.debugShapes?.forEach((shape) => {
+    shapes.push(shape)
+  })
 
   // Orbit rings
   STATE.bodies.forEach((body) => {
@@ -532,8 +722,11 @@ function renderWorld() {
 }
 
 function render() {
-  clearCanvas()
-  renderWorld()
+  if (!STATE.rendered) {
+    clearCanvas()
+    renderWorld()
+    STATE.rendered = true
+  }
   requestAnimationFrame(render)
 }
 
@@ -546,6 +739,10 @@ const ctx = canvas.getContext("2d")
 const KEYS = {}
 document.addEventListener("keydown", (e) => {
   KEYS[e.key] = true
+  if (e.key === "r") {
+    reset()
+    tick(true)
+  }
 })
 document.addEventListener("keyup", (e) => {
   KEYS[e.key] = false
@@ -592,6 +789,7 @@ const SYSTEM = {
 }
 
 function reset() {
+  STATE.rendered = false
   STATE.time = 0
   STATE.timeInc = 1 / 100
   STATE.zoom = 10
@@ -599,15 +797,16 @@ function reset() {
   const bodyToStartOn = STATE.bodies[_.random(STATE.bodies.length - 2) + 1]
   STATE.ship = {
     mass: 1,
+    inertia: 1,
     location: translate(bodyToStartOn.location, [
       0,
-      -getBodyRadius(bodyToStartOn) - shipRadius,
+      -getBodyRadius(bodyToStartOn) - shipRadius + 0.5,
     ]),
     velocity: bodyToStartOn.velocity,
     angle: Math.PI,
     angularVelocity: 0,
     thrusting: false,
-    landed: true,
+    landed: false,
   }
 }
 
