@@ -5,7 +5,9 @@
   "main": "space.js",
   "dependencies": {
     "@types/lodash": "^4.17.10",
-    "lodash": "^4.17.21"
+    "gl-matrix": "^3.4.3",
+    "lodash": "^4.17.21",
+    "twgl.js": "^5.5.4"
   },
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1"

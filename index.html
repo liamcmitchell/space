@@ -8,22 +8,47 @@
     />
     <title>Space</title>
     <style type="text/css">
+      html,
       body {
         height: 100%;
         background-color: black;
         margin: 0;
         padding: 0;
         overflow: hidden;
+        display: flex;
+        flex-direction: column;
+        overflow: hidden;
       }
       canvas {
-        max-width: 100%;
+        height: 0;
+        flex: 1 1;
+      }
+      #debug {
+        position: fixed;
+        padding: 8px;
+        color: white;
+        font-family: monospace;
       }
     </style>
   </head>
   <body>
     <script
-      src="https://cdn.jsdelivr.net/npm/lodash@4.17.21/lodash.min.js"
-      charset="utf-8"
+      src="https://cdnjs.cloudflare.com/ajax/libs/lodash.js/4.17.21/lodash.min.js"
+      integrity="sha512-WFN04846sdKMIP5LKNphMaWzU7YpMyCU245etK3g/2ARYbPK9Ub18eG+ljU96qKRCWh+quCY7yefSmlkQw1ANQ=="
+      crossorigin="anonymous"
+      referrerpolicy="no-referrer"
+    ></script>
+    <script
+      src="https://cdnjs.cloudflare.com/ajax/libs/gl-matrix/3.4.2/gl-matrix.min.js"
+      integrity="sha512-OLHsi9pTFoIFEdQUokm14DmQismCtKW+oBEKlpHVt0YU8SjMNIgfS6/CxJQpjLC0Ea8iPpVxPxr08swk1vSePQ=="
+      crossorigin="anonymous"
+      referrerpolicy="no-referrer"
+    ></script>
+    <script
+      src="https://cdnjs.cloudflare.com/ajax/libs/twgl.js/6.1.0/twgl.min.js"
+      integrity="sha512-Sq/DZNtCti7bzZJQOaMLj8A/JrHC2ISJQgZvKWYNkMBM8LssJr0Vn/K7J3GbPBjf/G4pOXqtvEVHeI6tb7PcDQ=="
+      crossorigin="anonymous"
+      referrerpolicy="no-referrer"
     ></script>
     <script src="space.js" charset="utf-8"></script>
   </body>

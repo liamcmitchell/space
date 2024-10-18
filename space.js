@@ -1,4 +1,11 @@
 /// <reference types="@types/lodash" />
+/// <reference types="gl-matrix" />
+/// <reference types="twgl.js" />
+
+const twgl = /** @type {import("twgl.js")} */ (window.twgl)
+const { mat4, quat, vec2 } = /** @type {import("gl-matrix")} */ (
+  window.glMatrix
+)
 
 /**
  * @typedef {[number, number]} Vector
@@ -35,7 +42,8 @@
 
 /**
  * @typedef {object} State
- * @prop {number}
+ * @prop {boolean} running
+ * @prop {boolean} rendered
  * @prop {number} time
  * @prop {number} timeInc
  * @prop {number} zoom
@@ -67,7 +75,9 @@ const shipThrust = [
 ]
 
 /** @type {State} */
-const STATE = {}
+const STATE = {
+  running: document.hasFocus(),
+}
 
 function getTotalMass(bodies) {
   return bodies.reduce((memo, body) => {
@@ -133,35 +143,6 @@ function getSystemBodies(system, time) {
     })
   }
   return bodies
-}
-
-function clearCanvas() {
-  const width = window.innerWidth * devicePixelRatio
-  const height = window.innerHeight * devicePixelRatio
-  canvas.width = width
-  canvas.height = height
-  ctx.fillRect(0, 0, width, height)
-}
-
-function drawCircle(x, y, r, style) {
-  ctx.beginPath()
-  ctx.arc(x, y, r, 0, Math.PI * 2, false)
-  ctx.strokeStyle = style
-  ctx.stroke()
-}
-
-function drawStar(x, y, r, points, depth, style) {
-  const lines = points * 2
-  ctx.beginPath()
-  ctx.moveTo(x, y + r)
-  for (let i = 0; i <= lines; i++) {
-    ctx.lineTo(
-      x + Math.sin((Math.PI * 2 * i) / lines) * r * (i % 2 ? depth : 1),
-      y + Math.cos((Math.PI * 2 * i) / lines) * r * (i % 2 ? depth : 1)
-    )
-  }
-  ctx.strokeStyle = style
-  ctx.stroke()
 }
 
 /**
@@ -289,6 +270,8 @@ function getBodyRadius(body) {
 }
 
 function tick(force) {
+  if (!STATE.running && !force) return
+
   STATE.rendered = false
 
   if (STATE.ship.destroyed && STATE.ship.destroyedFor > 2) {
@@ -421,7 +404,7 @@ function tick(force) {
               ) +
                 Math.pow(dot(shipPointPerp, collisionNormal), 2) /
                   STATE.ship.inertia)
-            if (impulseMagnitude > 4) {
+            if (impulseMagnitude > 2) {
               STATE.ship.destroyed = true
               STATE.ship.destroyedFor = 0
               return
@@ -464,38 +447,6 @@ function tick(force) {
 }
 
 /**
- * @param {Shape[]} shapes
- */
-function draw(shapes) {
-  shapes.forEach((shape) => {
-    if (shape.type == "circle") {
-      ctx.beginPath()
-      ctx.arc(
-        shape.center[0] * devicePixelRatio,
-        shape.center[1] * devicePixelRatio,
-        shape.radius * devicePixelRatio,
-        0,
-        Math.PI * 2 * devicePixelRatio,
-        shape.filled
-      )
-      ctx.strokeStyle = shape.strokeStyle
-      ctx.stroke()
-    }
-    if (shape.type == "line") {
-      ctx.beginPath()
-      for (let i = 0; i < shape.points.length; i++) {
-        ctx.lineTo(
-          shape.points[i][0] * devicePixelRatio,
-          shape.points[i][1] * devicePixelRatio
-        )
-      }
-      ctx.strokeStyle = shape.strokeStyle
-      ctx.stroke()
-    }
-  })
-}
-
-/**
  * @param {Vector} xy
  * @param {Vector} by
  * @returns {Vector}
@@ -524,25 +475,6 @@ function dot(a, b) {
 }
 
 /**
- * @param {Shape[]} shapes
- * @param {Vector} by
- * @returns {Shape[]}
- */
-function translateShapes(shapes, by) {
-  return shapes.map((shape) => {
-    if (shape.type == "circle") {
-      shape.center = translate(shape.center, by)
-    }
-    if (shape.type == "line") {
-      shape.points = shape.points.map((point) => {
-        return translate(point, by)
-      })
-    }
-    return shape
-  })
-}
-
-/**
  * @param {Vector} xy
  * @param {number} factor
  * @returns {Vector}
@@ -557,26 +489,6 @@ function scale(xy, factor) {
  */
 function perpendicular(vector) {
   return [-vector[1], vector[0]]
-}
-
-/**
- * @param {Shape[]} shapes
- * @param {number} factor
- * @returns {Shape[]}
- */
-function scaleShapes(shapes, factor) {
-  return shapes.map((shape) => {
-    if (shape.type == "circle") {
-      shape.center = scale(shape.center, factor)
-      shape.radius = shape.radius * factor
-    }
-    if (shape.type == "line") {
-      shape.points = shape.points.map((point) => {
-        return scale(point, factor)
-      })
-    }
-    return shape
-  })
 }
 
 /**
@@ -595,87 +507,15 @@ function rotate(xy, about, angle) {
 }
 
 /**
- * @param {Shape[]} shapes
- * @param {Vector} about
- * @param {number} angle
- * @returns {Shape[]}
- */
-function rotateShapes(shapes, about, angle) {
-  return shapes.map((shape) => {
-    if (shape.type == "circle") {
-      shape.center = rotate(shape.center, about, angle)
-    }
-    if (shape.type == "line") {
-      shape.points = shape.points.map((point) => {
-        return rotate(point, about, angle)
-      })
-    }
-    return shape
-  })
-}
-
-/**
- * @typedef {object} Circle
- * @prop {'circle'} type
- * @prop {Vector} center
- * @prop {number} radius
+ * @typedef {object} Shape
+ * @prop {'circle' | 'line'} type
+ * @prop {mat4} transform
+ * @prop {Vector[]} [points]
  * @prop {string} strokeStyle
  */
 
-/**
- * @typedef {object} Line
- * @prop {'line'} type
- * @prop {Vector[]} points
- * @prop {string} strokeStyle
- */
-
-/**
- * @typedef {Circle | Line} Shape
- */
-
-/**
- * @param {Ship} ship
- */
-function drawShip(ship) {
-  const shapes = []
-
-  if (ship.destroyed) {
-    // Circle that gets bigger and transitions from yellow to red/transparent
-    shapes.push({
-      type: "circle",
-      center: [0, 0],
-      radius: 1 + 10 * ship.destroyedFor,
-      strokeStyle:
-        "rgba(255, " +
-        Math.round(Math.max(0, 255 - ship.destroyedFor * 1000)) +
-        ", 0, " +
-        Math.max(0, 1 - ship.destroyedFor * 4) +
-        ")",
-    })
-  } else {
-    if (ship.thrusting) {
-      // Yellow flame
-      shapes.push({
-        type: "line",
-        points: shipThrust,
-        strokeStyle: "#ff0",
-      })
-    }
-    // Ship body
-    shapes.push({
-      type: "line",
-      points: shipBody,
-      strokeStyle: ship.landed ? "#3f3" : ship.colliding ? "#f33" : "#33f",
-    })
-  }
-
-  return translateShapes(
-    rotateShapes(shapes, [0, 0], ship.angle),
-    ship.location
-  )
-}
-
-function renderWorld() {
+function worldShapes() {
+  /** @type {Shape[]} */
   const shapes = []
 
   STATE.debugShapes?.forEach((shape) => {
@@ -687,9 +527,8 @@ function renderWorld() {
     if (body.orbitCenter) {
       shapes.push({
         type: "circle",
-        center: body.orbitCenter,
-        radius: body.orbitRadius,
-        strokeStyle: "#333",
+        transform: createTransform(0, body.orbitCenter, body.orbitRadius),
+        color: [0.2, 0.2, 0.2, 1],
       })
     }
   })
@@ -698,54 +537,330 @@ function renderWorld() {
   STATE.bodies.forEach((body) => {
     shapes.push({
       type: "circle",
-      center: body.location,
-      radius: getBodyRadius(body),
-      strokeStyle: "#fff",
+      transform: createTransform(0, body.location, getBodyRadius(body)),
+      color: [1, 1, 1, 1],
     })
   })
 
   // Ship
-  shapes.push(...drawShip(STATE.ship))
+  const ship = STATE.ship
+  if (ship.destroyed) {
+    // Circle that gets bigger and transitions from yellow to red/transparent
+    shapes.push({
+      type: "circle",
+      transform: createTransform(0, ship.location, 1 + 10 * ship.destroyedFor),
+      color: [
+        1,
+        Math.max(0, 1 - ship.destroyedFor * 2),
+        0,
+        Math.max(0, 1 - ship.destroyedFor / 2),
+      ],
+    })
+  } else {
+    if (ship.thrusting) {
+      // Yellow flame
+      shapes.push({
+        type: "lines",
+        points: shipThrust,
+        transform: createTransform(ship.angle, ship.location, 1),
+        color: [1, 1, 0, 1],
+      })
+    }
+    // Ship body
+    shapes.push({
+      type: "lines",
+      points: shipBody,
+      transform: createTransform(ship.angle, ship.location, 1),
+      color: ship.landed
+        ? [0.1, 1, 0.1, 1]
+        : ship.colliding
+        ? [1, 0.2, 0.2, 1]
+        : [0.3, 0.5, 1, 1],
+    })
+  }
 
-  draw(
-    translateShapes(
-      scaleShapes(
-        translateShapes(shapes, [
-          -STATE.ship.location[0],
-          -STATE.ship.location[1],
-        ]),
-        STATE.zoom
-      ),
-      [canvas.clientWidth / 2, canvas.clientHeight / 2]
-    )
-  )
+  return shapes
 }
+
+function createTransform(rotation, translation, scale) {
+  const transform = mat4.create()
+  mat4.translate(transform, transform, [translation[0], translation[1], 0])
+  mat4.rotateZ(transform, transform, -rotation)
+  mat4.scale(transform, transform, [scale, scale, scale])
+  return transform
+}
+
+function setupWebGlRender() {
+  const canvas = document.createElement("canvas")
+  document.body.appendChild(canvas)
+  const gl = canvas.getContext("webgl")
+  if (gl === null) {
+    alert(
+      "Unable to initialize WebGL. Your browser or machine may not support it."
+    )
+  }
+
+  const vertexShader = `
+    attribute vec4 position;
+    uniform mat4 projection;
+    uniform mat4 view;
+    void main() {
+      gl_Position = projection * view * position;
+    }
+  `
+
+  const fragmentShader = `
+    precision mediump float;
+    uniform vec4 color;
+    void main() {
+      gl_FragColor = color;
+    }
+  `
+
+  const programInfo = twgl.createProgramInfo(gl, [vertexShader, fragmentShader])
+
+  function createCirclePositions(stops) {
+    return _.times(stops * 2, (i) =>
+      i % 2 === 0
+        ? Math.cos((i * 2 * Math.PI) / (stops * 2))
+        : Math.sin(((i - 1) * 2 * Math.PI) / (stops * 2))
+    )
+  }
+
+  const bufferInfoMap = new WeakMap()
+
+  function createBufferInfoFromArrays(data) {
+    if (!bufferInfoMap.has(data)) {
+      const flattenedData = typeof data[0] === "number" ? data : data.flat()
+      bufferInfoMap.set(
+        data,
+        twgl.createBufferInfoFromArrays(gl, {
+          position: { numComponents: 2, data: flattenedData },
+        })
+      )
+    }
+    return bufferInfoMap.get(data)
+  }
+
+  const bufferInfos = {
+    circle: createBufferInfoFromArrays(createCirclePositions(100)),
+    shipBody: createBufferInfoFromArrays(shipBody),
+    shipThrust: createBufferInfoFromArrays(shipThrust),
+  }
+
+  const projection = mat4.create()
+
+  /**
+   * @param {Shape[]} shapes
+   */
+  return function renderWebGl(shapes) {
+    const width = canvas.clientWidth * devicePixelRatio
+    const height = canvas.clientHeight * devicePixelRatio
+
+    twgl.resizeCanvasToDisplaySize(canvas, devicePixelRatio)
+    gl.viewport(0, 0, width, height)
+
+    gl.enable(gl.DEPTH_TEST)
+    gl.depthFunc(gl.LEQUAL)
+
+    gl.enable(gl.BLEND)
+    gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA)
+
+    gl.clearColor(0.0, 0.0, 0.0, 1.0)
+    gl.clearDepth(1.0)
+    gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT)
+
+    gl.useProgram(programInfo.program)
+
+    mat4.identity(projection)
+    mat4.scale(projection, projection, [
+      2 / (width / devicePixelRatio),
+      -2 / (height / devicePixelRatio),
+      1,
+    ])
+    mat4.scale(projection, projection, [STATE.zoom, STATE.zoom, STATE.zoom])
+    mat4.translate(projection, projection, [
+      -STATE.ship.location[0],
+      -STATE.ship.location[1],
+      0,
+    ])
+
+    twgl.setUniforms(programInfo, {
+      projection,
+    })
+
+    let lastBuffer
+    shapes.forEach((shape) => {
+      twgl.setUniforms(programInfo, {
+        view: shape.transform,
+        color: parseColor(shape.color),
+      })
+      if (shape.type == "circle") {
+        const bufferInfo = bufferInfos.circle
+        if (lastBuffer !== bufferInfo) {
+          twgl.setBuffersAndAttributes(gl, programInfo, bufferInfo)
+          lastBuffer = bufferInfo
+        }
+        twgl.drawBufferInfo(gl, bufferInfos.circle, gl.LINE_LOOP)
+      }
+      if (shape.type == "lines") {
+        const bufferInfo = createBufferInfoFromArrays(shape.points)
+        if (lastBuffer !== bufferInfo) {
+          twgl.setBuffersAndAttributes(gl, programInfo, bufferInfo)
+          lastBuffer = bufferInfo
+        }
+        twgl.drawBufferInfo(gl, bufferInfo, gl.LINE_STRIP)
+      }
+    })
+  }
+}
+
+function setup2dRender() {
+  const canvas = document.createElement("canvas")
+  document.body.appendChild(canvas)
+  const ctx = canvas.getContext("2d")
+
+  const projection = mat4.create()
+  const view = mat4.create()
+  const center = vec2.create()
+  const edge = vec2.fromValues(1, 0)
+  const v1 = vec2.create()
+  const v2 = vec2.create()
+
+  /**
+   * @param {Shape[]} shapes
+   */
+  return function render2d(shapes) {
+    const width = canvas.clientWidth * devicePixelRatio
+    const height = canvas.clientHeight * devicePixelRatio
+    canvas.width = width
+    canvas.height = height
+    ctx.fillRect(0, 0, width, height)
+
+    mat4.identity(projection)
+    mat4.translate(projection, projection, [
+      (canvas.clientWidth / 2) * devicePixelRatio,
+      (canvas.clientHeight / 2) * devicePixelRatio,
+      0,
+    ])
+    const zoom = STATE.zoom * devicePixelRatio
+    mat4.scale(projection, projection, [zoom, zoom, zoom])
+    mat4.translate(projection, projection, [
+      -STATE.ship.location[0],
+      -STATE.ship.location[1],
+      0,
+    ])
+
+    shapes.forEach((shape) => {
+      mat4.multiply(view, projection, shape.transform)
+      if (shape.type == "circle") {
+        vec2.transformMat4(v1, center, view)
+        vec2.transformMat4(v2, edge, view)
+
+        ctx.beginPath()
+        ctx.arc(
+          v1[0],
+          v1[1],
+          vec2.distance(v1, v2),
+          0,
+          Math.PI * 2,
+          shape.filled
+        )
+        ctx.strokeStyle = serializeColor(shape.color)
+        ctx.stroke()
+      }
+      if (shape.type == "lines") {
+        ctx.beginPath()
+        for (let i = 0; i < shape.points.length; i++) {
+          vec2.transformMat4(v1, shape.points[i], view)
+          ctx.lineTo(v1[0], v1[1])
+        }
+        ctx.strokeStyle = serializeColor(shape.color)
+        ctx.stroke()
+      }
+    })
+  }
+}
+
+/**
+ * @param {string | number[]} color
+ * @returns {number[]}
+ */
+function parseColor(color) {
+  if (color && typeof color[0] === "number") {
+    return color
+  }
+  if (color && color.startsWith("#") && color.length === 4) {
+    return [
+      parseInt(color[1], 16) / 16,
+      parseInt(color[2], 16) / 16,
+      parseInt(color[3], 16) / 16,
+      1,
+    ]
+  }
+  if (color && color.startsWith("rgba(") && color.endsWith(")")) {
+    return color
+      .slice(5, color.length - 1)
+      .split(",")
+      .map((c, i) => parseFloat(c) / (i === 3 ? 1 : 255))
+  }
+  return [1, 1, 1, 1]
+}
+
+/**
+ * @param {number[]} color
+ * @returns {string}
+ */
+function serializeColor(color) {
+  return `rgba(${color[0] * 255}, ${color[1] * 255}, ${color[2] * 255}, ${
+    color[3]
+  })`
+}
+
+const renderers = [setup2dRender(), setupWebGlRender()]
+const debugInfo = document.createElement("div")
+debugInfo.id = "debug"
+document.body.appendChild(debugInfo)
 
 function render() {
   if (!STATE.rendered) {
-    clearCanvas()
-    renderWorld()
+    const shapes = worldShapes()
+    for (const render of renderers) {
+      const start = performance.now()
+      render(shapes)
+      const time = performance.now() - start
+      const pastWeight = 0.95
+      render.time = (render.time || time) * pastWeight + time * (1 - pastWeight)
+    }
+    debugInfo.innerHTML = `2d: ${renderers[0].time.toFixed(
+      1
+    )}ms<br>webgl: ${renderers[1].time.toFixed(1)}ms`
     STATE.rendered = true
   }
   requestAnimationFrame(render)
 }
 
-// Prepare canvas
-const canvas = document.createElement("canvas")
-document.body.appendChild(canvas)
-const ctx = canvas.getContext("2d")
-
 // Set event listeners
 const KEYS = {}
-document.addEventListener("keydown", (e) => {
-  KEYS[e.key] = true
-  if (e.key === "r") {
+document.addEventListener("keydown", (event) => {
+  KEYS[event.key] = true
+  if (event.key === "r") {
     reset()
     tick(true)
   }
 })
-document.addEventListener("keyup", (e) => {
-  KEYS[e.key] = false
+document.addEventListener("keyup", (event) => {
+  KEYS[event.key] = false
+})
+window.addEventListener("focus", () => {
+  STATE.running = true
+})
+window.addEventListener("blur", () => {
+  STATE.running = false
+})
+window.addEventListener("resize", () => {
+  STATE.rendered = false
+  requestAnimationFrame(render)
 })
 
 /** @type {System} */
@@ -794,13 +909,13 @@ function reset() {
   STATE.timeInc = 1 / 100
   STATE.zoom = 10
   STATE.bodies = getSystemBodies(SYSTEM, STATE.time)
-  const bodyToStartOn = STATE.bodies[_.random(STATE.bodies.length - 2) + 1]
+  const bodyToStartOn = STATE.bodies[5]
   STATE.ship = {
     mass: 1,
     inertia: 1,
     location: translate(bodyToStartOn.location, [
       0,
-      -getBodyRadius(bodyToStartOn) - shipRadius + 0.5,
+      -getBodyRadius(bodyToStartOn) - shipRadius + 1,
     ]),
     velocity: bodyToStartOn.velocity,
     angle: Math.PI,
@@ -813,4 +928,5 @@ function reset() {
 reset()
 
 setInterval(tick, 15)
-requestAnimationFrame(render)
+tick(true)
+render()
