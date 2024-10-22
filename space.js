@@ -3,9 +3,25 @@
 /// <reference types="twgl.js" />
 
 const twgl = /** @type {import("twgl.js")} */ (window.twgl)
-const { mat4, quat, vec2 } = /** @type {import("gl-matrix")} */ (
-  window.glMatrix
-)
+const { mat4, vec2 } = /** @type {import("gl-matrix")} */ (window.glMatrix)
+
+function debugTimer(label, fn) {
+  if (!location.hash.includes("debug")) return fn
+
+  const debugLine = document.createElement("div")
+  document.getElementById("debug").appendChild(debugLine)
+  const pastWeight = 0.95
+  let averageTime = 0
+
+  return function () {
+    const start = performance.now()
+    const val = fn.apply(this, arguments)
+    const time = performance.now() - start
+    averageTime = (averageTime || time) * pastWeight + time * (1 - pastWeight)
+    debugLine.innerHTML = `${label}${averageTime.toFixed(1)}ms`
+    return val
+  }
+}
 
 /**
  * @typedef {[number, number]} Vector
@@ -64,7 +80,7 @@ const shipBody = [
 ]
 
 const shipRadius = Math.max(
-  ...shipBody.map((point) => getDistance(point, center))
+  ...shipBody.map((point) => vec2.distance(point, center))
 )
 
 /** @type {Vector[]} */
@@ -128,10 +144,10 @@ function getSystemBodies(system, time) {
         Math.cos(childAngle) * child.orbitVelocity,
       ]
       childBodies.forEach((body) => {
-        body.location = translate(body.location, childLocation)
-        body.velocity = translate(body.velocity, childVelocity)
+        vec2.add(body.location, body.location, childLocation)
+        vec2.add(body.velocity, body.velocity, childVelocity)
         if (body.orbitCenter) {
-          body.orbitCenter = translate(body.orbitCenter, childLocation)
+          vec2.add(body.orbitCenter, body.orbitCenter, childLocation)
         } else {
           body.orbitCenter = [0, 0]
         }
@@ -161,61 +177,6 @@ function getForceOn(body, bodies) {
     },
     [0, 0]
   )
-}
-
-/**
- * @param {Vector} a
- * @param {Vector} b
- * @returns {number}
- */
-function getDistance(a, b) {
-  return Math.sqrt(
-    Math.pow(getDifferenceX(a, b), 2) + Math.pow(getDifferenceY(a, b), 2)
-  )
-}
-
-/**
- * @param {Vector} v
- * @returns {number}
- */
-function getMagnitude(v) {
-  return Math.sqrt(Math.pow(v[0], 2) + Math.pow(v[1], 2))
-}
-
-/**
- * @param {Vector} a
- * @param {Vector} b
- * @returns {Vector}
- */
-function getDifference(a, b) {
-  return [b[0] - a[0], b[1] - a[1]]
-}
-
-/**
- * @param {Vector} a
- * @param {Vector} b
- * @returns {number}
- */
-function getDifferenceX(a, b) {
-  return b[0] - a[0]
-}
-
-/**
- * @param {Vector} a
- * @param {Vector} b
- * @returns {number}
- */
-function getDifferenceY(a, b) {
-  return b[1] - a[1]
-}
-
-/**
- * @param {Vector} a
- * @param {Vector} b
- * @returns {number}
- */
-function getAngle(a, b) {
-  return Math.atan2(a[0] - b[0], a[1] - b[1])
 }
 
 /**
@@ -257,19 +218,19 @@ function getGravityForce(massA, massB, distance) {
  * @returns {Vector}
  */
 function getForceBetween(a, b) {
-  const distance = getDistance(a.location, b.location)
+  const out = vec2.create()
+  vec2.subtract(out, b.location, a.location)
+  const distance = vec2.length(out)
   const force = getGravityForce(a.mass, b.mass, distance)
-  return [
-    (force * getDifferenceX(a.location, b.location)) / distance,
-    (force * getDifferenceY(a.location, b.location)) / distance,
-  ]
+  vec2.scale(out, out, force / distance)
+  return out
 }
 
 function getBodyRadius(body) {
   return Math.pow(((body.mass / Math.PI) * 3) / 2, 1 / 3)
 }
 
-function tick(force) {
+function _tick(force) {
   if (!STATE.running && !force) return
 
   STATE.rendered = false
@@ -295,7 +256,8 @@ function tick(force) {
     // Thrust
     STATE.ship.thrusting = true
     STATE.ship.landed = false
-    STATE.ship.velocity = translate(
+    vec2.add(
+      STATE.ship.velocity,
       STATE.ship.velocity,
       getAngleVector(STATE.ship.angle, 0.1)
     )
@@ -315,24 +277,25 @@ function tick(force) {
     // Increment destroyed counter
     STATE.ship.destroyedFor += STATE.timeInc
     // Slowly decrease velocity (and player view)
-    STATE.ship.velocity = scale(STATE.ship.velocity, 0.99)
+    vec2.scale(STATE.ship.velocity, STATE.ship.velocity, 0.99)
   }
 
   if (!STATE.ship.destroyed) {
     // Apply gravity to ship
-    STATE.ship.velocity = translate(
+    vec2.scaleAndAdd(
       STATE.ship.velocity,
-      scale(
-        getForceOn(STATE.ship, STATE.bodies),
-        STATE.timeInc / STATE.ship.mass
-      )
+      STATE.ship.velocity,
+      getForceOn(STATE.ship, STATE.bodies),
+      STATE.timeInc / STATE.ship.mass
     )
   }
 
   // Move ship
-  STATE.ship.location = translate(
+  vec2.scaleAndAdd(
     STATE.ship.location,
-    scale(STATE.ship.velocity, STATE.timeInc)
+    STATE.ship.location,
+    STATE.ship.velocity,
+    STATE.timeInc
   )
   STATE.ship.angle += STATE.ship.angularVelocity * STATE.timeInc
   STATE.ship.angle %= Math.PI * 2
@@ -342,24 +305,27 @@ function tick(force) {
 
   if (!STATE.ship.destroyed) {
     for (const body of STATE.bodies) {
-      const distance = getDistance(body.location, STATE.ship.location)
+      const distance = vec2.distance(body.location, STATE.ship.location)
       const radius = getBodyRadius(body)
 
       if (distance < radius + shipRadius) {
-        const points = shipBody.map((v) =>
-          translate(rotate(v, center, STATE.ship.angle), STATE.ship.location)
+        const transform = createTransform(
+          STATE.ship.angle,
+          STATE.ship.location,
+          1
         )
+        const points = shipBody.map((v) => vec2.transformMat4([], v, transform))
         /** @type {[Vector, number][]} */
         const contactPoints = []
         STATE.debugShapes = []
         for (let index = 0; index < points.length - 1; index++) {
           const a = points[index]
-          const aDistance = getDistance(a, body.location)
+          const aDistance = vec2.distance(a, body.location)
           if (aDistance < radius) {
             contactPoints.push([a, aDistance])
           }
           const b = points[index + 1]
-          const length = getDistance(a, b)
+          const length = vec2.distance(a, b)
           const dot =
             ((body.location[0] - a[0]) * (b[0] - a[0]) +
               (body.location[1] - a[1]) * (b[1] - a[1])) /
@@ -368,10 +334,11 @@ function tick(force) {
             a[0] + dot * (b[0] - a[0]),
             a[1] + dot * (b[1] - a[1]),
           ]
-          const closestDistance = getDistance(body.location, closest)
+          const closestDistance = vec2.distance(body.location, closest)
           if (
             closestDistance < radius &&
-            getDistance(a, closest) + getDistance(closest, b) < length + 0.01
+            vec2.distance(a, closest) + vec2.distance(closest, b) <
+              length + 0.01
           ) {
             contactPoints.push([closest, closestDistance])
           }
@@ -381,64 +348,77 @@ function tick(force) {
         contactPoints.sort((a, b) => a[1] - b[1])
 
         for (const [point, pointBodyDistance] of contactPoints) {
-          const shipPoint = getDifference(point, STATE.ship.location)
+          const shipPoint = vec2.subtract([], STATE.ship.location, point)
           const shipPointPerp = perpendicular(shipPoint)
-          const shipPointAngularVelocity = scale(
+          const shipPointAngularVelocity = vec2.scale(
+            [],
             shipPointPerp,
             STATE.ship.angularVelocity
           )
-          const pointRelativeVelocity = getDifference(
-            body.velocity,
-            translate(STATE.ship.velocity, shipPointAngularVelocity)
+          const pointRelativeVelocity = vec2.subtract(
+            [],
+            vec2.add([], STATE.ship.velocity, shipPointAngularVelocity),
+            body.velocity
           )
-          const bodyPoint = getDifference(body.location, point)
-          const collisionNormal = normalize(bodyPoint)
-          const colliding = dot(collisionNormal, pointRelativeVelocity) < 0
+          const bodyPoint = vec2.subtract([], point, body.location)
+          const collisionNormal = vec2.normalize([], bodyPoint)
+          const colliding = vec2.dot(collisionNormal, pointRelativeVelocity) < 0
           STATE.ship.colliding = STATE.ship.colliding || colliding
           if (colliding) {
             const impulseMagnitude =
-              -dot(scale(pointRelativeVelocity, 1), collisionNormal) /
-              (dot(
+              -vec2.dot(pointRelativeVelocity, collisionNormal) /
+              (vec2.dot(
                 collisionNormal,
-                scale(collisionNormal, 1 / STATE.ship.mass)
+                vec2.scale([], collisionNormal, 1 / STATE.ship.mass)
               ) +
-                Math.pow(dot(shipPointPerp, collisionNormal), 2) /
+                Math.pow(vec2.dot(shipPointPerp, collisionNormal), 2) /
                   STATE.ship.inertia)
             if (impulseMagnitude > 2) {
               STATE.ship.destroyed = true
               STATE.ship.destroyedFor = 0
               return
             }
-            STATE.ship.velocity = translate(
+            vec2.scaleAndAdd(
               STATE.ship.velocity,
-              scale(collisionNormal, impulseMagnitude / STATE.ship.mass)
+              STATE.ship.velocity,
+              collisionNormal,
+              impulseMagnitude / STATE.ship.mass
             )
             STATE.ship.angularVelocity +=
-              dot(shipPointPerp, scale(collisionNormal, impulseMagnitude)) /
-              STATE.ship.inertia
+              vec2.dot(
+                shipPointPerp,
+                vec2.scale([], collisionNormal, impulseMagnitude)
+              ) / STATE.ship.inertia
             // Friction
             const collisionPerp = perpendicular(collisionNormal)
-            const surfaceVelocity = dot(pointRelativeVelocity, collisionPerp)
-            STATE.ship.velocity = translate(
+            const surfaceVelocity = vec2.dot(
+              pointRelativeVelocity,
+              collisionPerp
+            )
+            vec2.scaleAndAdd(
               STATE.ship.velocity,
-              scale(collisionPerp, -surfaceVelocity / 20)
+              STATE.ship.velocity,
+              collisionPerp,
+              -surfaceVelocity / 20
             )
           }
           // Shift out of body.
-          STATE.ship.location = translate(
+          vec2.scaleAndAdd(
             STATE.ship.location,
-            scale(collisionNormal, (radius - pointBodyDistance) / 2)
+            STATE.ship.location,
+            collisionNormal,
+            (radius - pointBodyDistance) / 2
           )
         }
 
         STATE.ship.landed =
           STATE.ship.colliding &&
           Math.abs(STATE.ship.angularVelocity) < 1 &&
-          getDistance(STATE.ship.velocity, body.velocity) < 0.5 &&
+          vec2.distance(STATE.ship.velocity, body.velocity) < 0.5 &&
           Math.abs(
             getAngleDifference(
               STATE.ship.angle,
-              getAngle(STATE.ship.location, body.location)
+              vec2.angle(STATE.ship.location, body.location)
             )
           ) < 0.5
       }
@@ -446,42 +426,7 @@ function tick(force) {
   }
 }
 
-/**
- * @param {Vector} xy
- * @param {Vector} by
- * @returns {Vector}
- */
-function translate(xy, by) {
-  return [xy[0] + by[0], xy[1] + by[1]]
-}
-
-/**
- * @param {Vector} v
- * @returns {Vector}
- */
-function normalize(v) {
-  const size = getMagnitude(v)
-  if (size === 0) return v
-  return [v[0] / size, v[1] / size]
-}
-
-/**
- * @param {Vector} a
- * @param {Vector} b
- * @returns {number}
- */
-function dot(a, b) {
-  return a[0] * b[0] + a[1] * b[1]
-}
-
-/**
- * @param {Vector} xy
- * @param {number} factor
- * @returns {Vector}
- */
-function scale(xy, factor) {
-  return [xy[0] * factor, xy[1] * factor]
-}
+const tick = debugTimer("tick: ", _tick)
 
 /**
  * @param {Vector} vector
@@ -492,26 +437,12 @@ function perpendicular(vector) {
 }
 
 /**
- * @param {Vector} xy
- * @param {Vector} about
- * @param {number} angle
- * @returns {Vector}
- */
-function rotate(xy, about, angle) {
-  const distance = getDistance(xy, about)
-  const currentAngle = getAngle(xy, about)
-  return [
-    about[0] + Math.sin(currentAngle + angle) * distance,
-    about[1] + Math.cos(currentAngle + angle) * distance,
-  ]
-}
-
-/**
  * @typedef {object} Shape
  * @prop {'circle' | 'line'} type
  * @prop {mat4} transform
  * @prop {Vector[]} [points]
- * @prop {string} strokeStyle
+ * @prop {number[]} color
+ * @prop {boolean} filled
  */
 
 function worldShapes() {
@@ -539,6 +470,7 @@ function worldShapes() {
       type: "circle",
       transform: createTransform(0, body.location, getBodyRadius(body)),
       color: [1, 1, 1, 1],
+      filled: true,
     })
   })
 
@@ -564,6 +496,7 @@ function worldShapes() {
         points: shipThrust,
         transform: createTransform(ship.angle, ship.location, 1),
         color: [1, 1, 0, 1],
+        filled: true,
       })
     }
     // Ship body
@@ -571,11 +504,8 @@ function worldShapes() {
       type: "lines",
       points: shipBody,
       transform: createTransform(ship.angle, ship.location, 1),
-      color: ship.landed
-        ? [0.1, 1, 0.1, 1]
-        : ship.colliding
-        ? [1, 0.2, 0.2, 1]
-        : [0.3, 0.5, 1, 1],
+      color: [0.3, 0.5, 1, 1],
+      filled: true,
     })
   }
 
@@ -650,6 +580,14 @@ function setupWebGlRender() {
 
   const projection = mat4.create()
 
+  let lastBufferInfo
+  function setBuffersAndAttributes(bufferInfo) {
+    if (lastBufferInfo !== bufferInfo) {
+      twgl.setBuffersAndAttributes(gl, programInfo, bufferInfo)
+      lastBufferInfo = bufferInfo
+    }
+  }
+
   /**
    * @param {Shape[]} shapes
    */
@@ -689,152 +627,37 @@ function setupWebGlRender() {
       projection,
     })
 
-    let lastBuffer
     shapes.forEach((shape) => {
       twgl.setUniforms(programInfo, {
         view: shape.transform,
-        color: parseColor(shape.color),
+        color: shape.color,
       })
       if (shape.type == "circle") {
-        const bufferInfo = bufferInfos.circle
-        if (lastBuffer !== bufferInfo) {
-          twgl.setBuffersAndAttributes(gl, programInfo, bufferInfo)
-          lastBuffer = bufferInfo
-        }
-        twgl.drawBufferInfo(gl, bufferInfos.circle, gl.LINE_LOOP)
+        setBuffersAndAttributes(bufferInfos.circle)
+        twgl.drawBufferInfo(
+          gl,
+          bufferInfos.circle,
+          shape.filled ? gl.TRIANGLE_FAN : gl.LINE_LOOP
+        )
       }
       if (shape.type == "lines") {
         const bufferInfo = createBufferInfoFromArrays(shape.points)
-        if (lastBuffer !== bufferInfo) {
-          twgl.setBuffersAndAttributes(gl, programInfo, bufferInfo)
-          lastBuffer = bufferInfo
-        }
-        twgl.drawBufferInfo(gl, bufferInfo, gl.LINE_STRIP)
-      }
-    })
-  }
-}
-
-function setup2dRender() {
-  const canvas = document.createElement("canvas")
-  document.body.appendChild(canvas)
-  const ctx = canvas.getContext("2d")
-
-  const projection = mat4.create()
-  const view = mat4.create()
-  const center = vec2.create()
-  const edge = vec2.fromValues(1, 0)
-  const v1 = vec2.create()
-  const v2 = vec2.create()
-
-  /**
-   * @param {Shape[]} shapes
-   */
-  return function render2d(shapes) {
-    const width = canvas.clientWidth * devicePixelRatio
-    const height = canvas.clientHeight * devicePixelRatio
-    canvas.width = width
-    canvas.height = height
-    ctx.fillRect(0, 0, width, height)
-
-    mat4.identity(projection)
-    mat4.translate(projection, projection, [
-      (canvas.clientWidth / 2) * devicePixelRatio,
-      (canvas.clientHeight / 2) * devicePixelRatio,
-      0,
-    ])
-    const zoom = STATE.zoom * devicePixelRatio
-    mat4.scale(projection, projection, [zoom, zoom, zoom])
-    mat4.translate(projection, projection, [
-      -STATE.ship.location[0],
-      -STATE.ship.location[1],
-      0,
-    ])
-
-    shapes.forEach((shape) => {
-      mat4.multiply(view, projection, shape.transform)
-      if (shape.type == "circle") {
-        vec2.transformMat4(v1, center, view)
-        vec2.transformMat4(v2, edge, view)
-
-        ctx.beginPath()
-        ctx.arc(
-          v1[0],
-          v1[1],
-          vec2.distance(v1, v2),
-          0,
-          Math.PI * 2,
-          shape.filled
+        setBuffersAndAttributes(bufferInfo)
+        twgl.drawBufferInfo(
+          gl,
+          bufferInfo,
+          shape.filled ? gl.TRIANGLE_FAN : gl.LINE_STRIP
         )
-        ctx.strokeStyle = serializeColor(shape.color)
-        ctx.stroke()
-      }
-      if (shape.type == "lines") {
-        ctx.beginPath()
-        for (let i = 0; i < shape.points.length; i++) {
-          vec2.transformMat4(v1, shape.points[i], view)
-          ctx.lineTo(v1[0], v1[1])
-        }
-        ctx.strokeStyle = serializeColor(shape.color)
-        ctx.stroke()
       }
     })
   }
 }
 
-/**
- * @param {string | number[]} color
- * @returns {number[]}
- */
-function parseColor(color) {
-  if (color && typeof color[0] === "number") {
-    return color
-  }
-  if (color && color.startsWith("#") && color.length === 4) {
-    return [
-      parseInt(color[1], 16) / 16,
-      parseInt(color[2], 16) / 16,
-      parseInt(color[3], 16) / 16,
-      1,
-    ]
-  }
-  if (color && color.startsWith("rgba(") && color.endsWith(")")) {
-    return color
-      .slice(5, color.length - 1)
-      .split(",")
-      .map((c, i) => parseFloat(c) / (i === 3 ? 1 : 255))
-  }
-  return [1, 1, 1, 1]
-}
-
-/**
- * @param {number[]} color
- * @returns {string}
- */
-function serializeColor(color) {
-  return `rgba(${color[0] * 255}, ${color[1] * 255}, ${color[2] * 255}, ${
-    color[3]
-  })`
-}
-
-const renderers = [setup2dRender(), setupWebGlRender()]
-const debugInfo = document.createElement("div")
-debugInfo.id = "debug"
-document.body.appendChild(debugInfo)
+const renderShapes = debugTimer("render: ", setupWebGlRender())
 
 function render() {
   if (!STATE.rendered) {
-    const shapes = worldShapes()
-    for (const render of renderers) {
-      const start = performance.now()
-      render(shapes)
-      const time = performance.now() - start
-      const pastWeight = 0.95
-      render.time = (render.time || time) * pastWeight + time * (1 - pastWeight)
-    }
-    debugInfo.innerHTML = `2d: ${renderers[0].time.toFixed(
-      1
-    )}ms<br>webgl: ${renderers[1].time.toFixed(1)}ms`
+    renderShapes(worldShapes())
     STATE.rendered = true
   }
   requestAnimationFrame(render)
@@ -913,7 +736,7 @@ function reset() {
   STATE.ship = {
     mass: 1,
     inertia: 1,
-    location: translate(bodyToStartOn.location, [
+    location: vec2.add([], bodyToStartOn.location, [
       0,
       -getBodyRadius(bodyToStartOn) - shipRadius + 1,
     ]),
@@ -927,6 +750,6 @@ function reset() {
 
 reset()
 
-setInterval(tick, 15)
+setInterval(tick, 16)
 tick(true)
 render()
