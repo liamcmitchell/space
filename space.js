@@ -23,6 +23,25 @@ function debugTimer(label, fn) {
   }
 }
 
+function debugSlider(label, value) {
+  if (!location.hash.includes("debug")) return () => value
+
+  const debugLine = document.createElement("div")
+  debugLine.innerText = label
+  document.getElementById("debug").appendChild(debugLine)
+  const slider = document.createElement("input")
+  slider.type = "range"
+  slider.min = 0
+  slider.max = 2
+  slider.step = 0.01
+  slider.value = value
+  debugLine.appendChild(slider)
+
+  return function () {
+    return slider.valueAsNumber
+  }
+}
+
 /**
  * @typedef {[number, number]} Vector
  */
@@ -85,6 +104,7 @@ const shipRadius = Math.max(
 
 /** @type {Vector[]} */
 const shipThrust = [
+  [0, 0],
   [-0.25, -0.25],
   [0, -1],
   [0.25, -0.25],
@@ -326,14 +346,7 @@ function _tick(force) {
           }
           const b = points[index + 1]
           const length = vec2.distance(a, b)
-          const dot =
-            ((body.location[0] - a[0]) * (b[0] - a[0]) +
-              (body.location[1] - a[1]) * (b[1] - a[1])) /
-            Math.pow(length, 2)
-          const closest = [
-            a[0] + dot * (b[0] - a[0]),
-            a[1] + dot * (b[1] - a[1]),
-          ]
+          const closest = closestPointOnLine(body.location, a, b, length)
           const closestDistance = vec2.distance(body.location, closest)
           if (
             closestDistance < radius &&
@@ -429,6 +442,20 @@ function _tick(force) {
 const tick = debugTimer("tick: ", _tick)
 
 /**
+ * @param {Vector} target
+ * @param {Vector} a
+ * @param {Vector} b
+ * @param {number} length
+ * @returns {Vector}
+ */
+function closestPointOnLine(target, a, b, length = vec2.distance(a, b)) {
+  const dot =
+    ((target[0] - a[0]) * (b[0] - a[0]) + (target[1] - a[1]) * (b[1] - a[1])) /
+    Math.pow(length, 2)
+  return [a[0] + dot * (b[0] - a[0]), a[1] + dot * (b[1] - a[1])]
+}
+
+/**
  * @param {Vector} vector
  * @returns {Vector}
  */
@@ -459,7 +486,7 @@ function worldShapes() {
       shapes.push({
         type: "circle",
         transform: createTransform(0, body.orbitCenter, body.orbitRadius),
-        color: [0.2, 0.2, 0.2, 1],
+        color: [1, 1, 1, 0.3],
       })
     }
   })
@@ -523,31 +550,61 @@ function createTransform(rotation, translation, scale) {
 function setupWebGlRender() {
   const canvas = document.createElement("canvas")
   document.body.appendChild(canvas)
-  const gl = canvas.getContext("webgl")
+  const gl = canvas.getContext("webgl2")
   if (gl === null) {
     alert(
       "Unable to initialize WebGL. Your browser or machine may not support it."
     )
   }
 
-  const vertexShader = `
-    attribute vec4 position;
+  const backgroundProgramInfo = twgl.createProgramInfo(gl, [
+    /* glsl */ `#version 300 es
+    in vec4 position;
+    void main() {
+      gl_Position = position;
+    }
+    `,
+    /* glsl */ `#version 300 es
+    precision highp float;
+    uniform vec4 color;
+    uniform float time;
+    out vec4 outColor;
+    uvec3 pcg3d(uvec3 v) {
+      v = v * 1664525u + 1013904223u;
+      v.x += v.y*v.z;
+      v.y += v.z*v.x;
+      v.z += v.x*v.y;
+      v ^= v >> 16u;
+      v.x += v.y*v.z;
+      v.y += v.z*v.x;
+      v.z += v.x*v.y;
+      return v;
+    }
+    void main() {
+      vec3 random = vec3(pcg3d(uvec3(gl_FragCoord.xyz))) /  float(0xffffffffu);
+      outColor = color * pow(random.x, 600.0) * (1.0 + (sin((random.y * 6.3) + (time * random.z * 5.0)) * 0.2));
+    }
+    `,
+  ])
+
+  const programInfo = twgl.createProgramInfo(gl, [
+    /* glsl */ `#version 300 es
+    in vec4 position;
     uniform mat4 projection;
     uniform mat4 view;
     void main() {
       gl_Position = projection * view * position;
     }
-  `
-
-  const fragmentShader = `
-    precision mediump float;
+    `,
+    /* glsl */ `#version 300 es
+    precision highp float;
     uniform vec4 color;
+    out vec4 outColor;
     void main() {
-      gl_FragColor = color;
+      outColor = color;
     }
-  `
-
-  const programInfo = twgl.createProgramInfo(gl, [vertexShader, fragmentShader])
+    `,
+  ])
 
   function createCirclePositions(stops) {
     return _.times(stops * 2, (i) =>
@@ -573,6 +630,7 @@ function setupWebGlRender() {
   }
 
   const bufferInfos = {
+    background: createBufferInfoFromArrays([1, 1, 1, -1, -1, 1, -1, -1]),
     circle: createBufferInfoFromArrays(createCirclePositions(100)),
     shipBody: createBufferInfoFromArrays(shipBody),
     shipThrust: createBufferInfoFromArrays(shipThrust),
@@ -607,6 +665,14 @@ function setupWebGlRender() {
     gl.clearColor(0.0, 0.0, 0.0, 1.0)
     gl.clearDepth(1.0)
     gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT)
+
+    gl.useProgram(backgroundProgramInfo.program)
+    twgl.setUniforms(backgroundProgramInfo, {
+      time: STATE.time,
+      color: [1, 1, 1, 1],
+    })
+    setBuffersAndAttributes(bufferInfos.background)
+    twgl.drawBufferInfo(gl, bufferInfos.background, gl.TRIANGLE_STRIP)
 
     gl.useProgram(programInfo.program)
 
