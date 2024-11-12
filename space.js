@@ -298,9 +298,12 @@ const _tick = debugTimer("tick: ", function () {
 
   setSystemBodies(SYSTEM, STATE.time, STATE.bodies)
 
-  ship.thrusters[0].on = KEYS["ArrowUp"] && !ship.destroyed
-  ship.thrusters[1].on = KEYS["ArrowLeft"] && !ship.destroyed
-  ship.thrusters[2].on = KEYS["ArrowRight"] && !ship.destroyed
+  ship.thrusters[0].on =
+    !ship.destroyed && (KEYS["ArrowUp"] || touchAreas.center.touched)
+  ship.thrusters[1].on =
+    !ship.destroyed && (KEYS["ArrowLeft"] || touchAreas.left.touched)
+  ship.thrusters[2].on =
+    !ship.destroyed && (KEYS["ArrowRight"] || touchAreas.right.touched)
 
   if (ship.destroyed) {
     // Increment destroyed counter
@@ -572,7 +575,7 @@ function worldShapes() {
     transform: shipTransform,
     color: ship.destroyed
       ? [0.3, 0.3, 0.3, 1]
-      : [1 - 0.7 * ship.health, 0.5, ship.health, 1],
+      : [1 - ship.health, ship.health * 0.4, 2 * ship.health, 1],
     filled: true,
   })
 
@@ -771,7 +774,11 @@ function render(force) {
 }
 
 // Set event listeners
-const KEYS = {}
+const KEYS = {
+  ArrowLeft: false,
+  ArrowUp: false,
+  ArrowRight: false,
+}
 document.addEventListener("keydown", (event) => {
   KEYS[event.key] = true
   if (event.key === "r") {
@@ -792,6 +799,42 @@ window.addEventListener("resize", () => {
   STATE.rendered = false
   requestAnimationFrame(render)
 })
+
+const touchAreas = {
+  left: { top: 0, bottom: 1, left: 0, right: 0.3, touched: false },
+  center: { top: 0, bottom: 1, left: 0.32, right: 0.68, touched: false },
+  right: { top: 0, bottom: 1, left: 0.7, right: 1, touched: false },
+}
+
+/**
+ *
+ * @param {TouchEvent} event
+ */
+function handleTouch(event) {
+  const { innerWidth, innerHeight } = window
+  for (const area in touchAreas) {
+    touchAreas[area].touched = false
+  }
+  for (const touch of event.touches) {
+    const x = touch.clientX / innerWidth
+    const y = touch.clientY / innerHeight
+    for (const area in touchAreas) {
+      const touchArea = touchAreas[area]
+      if (
+        x > touchArea.left &&
+        x < touchArea.right &&
+        y > touchArea.top &&
+        y < touchArea.bottom
+      ) {
+        touchArea.touched = true
+      }
+    }
+  }
+}
+document.addEventListener("touchstart", handleTouch)
+document.addEventListener("touchend", handleTouch)
+document.addEventListener("touchcancel", handleTouch)
+document.addEventListener("touchmove", handleTouch)
 
 /** @type {System} */
 const SYSTEM = {
