@@ -609,6 +609,7 @@ function setupWebGlRender() {
     `,
     /* glsl */ `#version 300 es
     precision highp float;
+    precision highp int;
     uniform vec4 color;
     uniform float time;
     out vec4 outColor;
