@@ -284,6 +284,12 @@ function getBodyRadius(mass) {
   return (((mass / Math.PI) * 3) / 2) ** (1 / 3)
 }
 
+function tick(force) {
+  if (STATE.running || force) {
+    _tick()
+  }
+}
+
 const _tick = debugTimer("tick: ", function () {
   STATE.rendered = false
   STATE.debugShapes = []
@@ -477,12 +483,6 @@ const _tick = debugTimer("tick: ", function () {
  */
 function smooth(prev, curr, pastWeight) {
   return prev * pastWeight + curr * (1 - pastWeight)
-}
-
-function tick(force) {
-  if (STATE.running || force) {
-    _tick()
-  }
 }
 
 /**
@@ -764,8 +764,7 @@ function setupWebGlRender() {
 
 const renderShapes = debugTimer("render: ", setupWebGlRender())
 
-function render(force) {
-  tick(force === true)
+function render() {
   if (!STATE.rendered) {
     renderShapes(worldShapes())
     STATE.rendered = true
@@ -906,3 +905,4 @@ function reset() {
 
 reset()
 render(true)
+setInterval(tick, 16)
