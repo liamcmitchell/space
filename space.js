@@ -1,4 +1,3 @@
-/// <reference types="@types/lodash" />
 /// <reference types="gl-matrix" />
 /// <reference types="twgl.js" />
 
@@ -651,7 +650,7 @@ function setupWebGlRender() {
   ])
 
   function createCirclePositions(stops) {
-    return _.times(stops * 2, (i) =>
+    return Array.from({ length: stops * 2 }, (_, i) =>
       i % 2 === 0
         ? Math.cos((i * 2 * Math.PI) / (stops * 2))
         : Math.sin(((i - 1) * 2 * Math.PI) / (stops * 2))

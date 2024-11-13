@@ -4,9 +4,7 @@
   "description": "2D solar system and ship. Playing with canvas and basic physics.",
   "main": "space.js",
   "dependencies": {
-    "@types/lodash": "^4.17.10",
     "gl-matrix": "^3.4.3",
-    "lodash": "^4.17.21",
     "twgl.js": "^5.5.4"
   },
   "scripts": {
