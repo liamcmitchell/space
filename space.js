@@ -611,6 +611,7 @@ function setupWebGlRender() {
     precision highp int;
     uniform vec4 color;
     uniform float time;
+    uniform float devicePixelRatio;
     out vec4 outColor;
     uvec3 pcg3d(uvec3 v) {
       v = v * 1664525u + 1013904223u;
@@ -623,9 +624,18 @@ function setupWebGlRender() {
       v.z += v.x*v.y;
       return v;
     }
+    float stars(float pixelRatio, float minBrightness, float flicker) {
+      uvec3 seed = uvec3(gl_FragCoord.xyz / pixelRatio);
+      seed.z = seed.x ^ seed.y;
+      vec3 random = vec3(pcg3d(seed)) / float(0xffffffffu);
+      float brightness = pow(random.x, 600.0);
+      brightness = brightness * step(minBrightness, brightness);
+      return brightness * ((1.0 - flicker) + (sin((random.y * 6.3) + (time * random.z * 5.0)) * flicker));
+    }
     void main() {
-      vec3 random = vec3(pcg3d(uvec3(gl_FragCoord.xyz))) / float(0xffffffffu);
-      outColor = color * pow(random.x, 600.0) * (0.9 + (sin((random.y * 6.3) + (time * random.z * 5.0)) * 0.1));
+      float closeStars = stars(devicePixelRatio, 0.8, 0.1);
+      float farStars = stars(1.0, 0.0, 0.1);
+      outColor = color * (closeStars + farStars);
     }
     `,
   ])
@@ -713,6 +723,7 @@ function setupWebGlRender() {
     twgl.setUniforms(backgroundProgramInfo, {
       time: STATE.time,
       color: [1, 1, 1, 1],
+      devicePixelRatio,
     })
     setBuffersAndAttributes(bufferInfos.background)
     twgl.drawBufferInfo(gl, bufferInfos.background, gl.TRIANGLE_STRIP)
