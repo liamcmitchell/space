@@ -309,6 +309,7 @@ const _tick = debugTimer("tick: ", function () {
     !ship.destroyed && (KEYS["ArrowLeft"] || touchAreas.left.touched)
   ship.thrusters[2].on =
     !ship.destroyed && (KEYS["ArrowRight"] || touchAreas.right.touched)
+  playThruster(ship.thrusters.some((t) => t.on))
 
   if (ship.destroyed) {
     // Increment destroyed counter
@@ -783,6 +784,77 @@ function render() {
   requestAnimationFrame(render)
 }
 
+const audioContext = new AudioContext()
+/** @type {AudioBufferSourceNode} */
+let thrusterSource
+/** @type {GainNode} */
+let thrusterAmp
+/** @type {ReturnType<typeof setTimeout>} */
+let thrusterStop
+const attackTime = 0.1
+const releaseTime = 0.2
+const thrusterDuration = 1
+const thrusterBufferSize = audioContext.sampleRate * thrusterDuration
+const thrusterBuffer = new AudioBuffer({
+  length: thrusterBufferSize,
+  sampleRate: audioContext.sampleRate,
+})
+const thrusterBufferData = thrusterBuffer.getChannelData(0)
+for (let i = 0; i < thrusterBufferSize; i++) {
+  thrusterBufferData[i] = Math.random() * 2 - 1
+}
+function playThruster(on) {
+  if (on && !thrusterSource) {
+    thrusterStop = undefined
+    thrusterSource = new AudioBufferSourceNode(audioContext, {
+      buffer: thrusterBuffer,
+      loop: true,
+      loopEnd: thrusterDuration,
+    })
+    const bandpass = new BiquadFilterNode(audioContext, {
+      type: "bandpass",
+      frequency: 100,
+      Q: 0.5,
+    })
+    thrusterAmp = audioContext.createGain()
+    thrusterAmp.gain.value = 0
+    thrusterAmp.gain.linearRampToValueAtTime(
+      1,
+      audioContext.currentTime + attackTime
+    )
+    thrusterSource
+      .connect(bandpass)
+      .connect(thrusterAmp)
+      .connect(audioContext.destination)
+    thrusterSource.start()
+    thrusterSource.addEventListener("ended", () => {
+      thrusterSource = undefined
+      thrusterAmp = undefined
+      thrusterStop = undefined
+    })
+  }
+  if (on && thrusterStop) {
+    clearTimeout(thrusterStop)
+    thrusterStop = undefined
+    thrusterAmp.gain.value = thrusterAmp.gain.value
+    thrusterAmp.gain.cancelAndHoldAtTime(audioContext.currentTime)
+    thrusterAmp.gain.linearRampToValueAtTime(
+      1,
+      audioContext.currentTime + attackTime
+    )
+  }
+  if (!on && thrusterSource && !thrusterStop) {
+    thrusterAmp.gain.cancelAndHoldAtTime(audioContext.currentTime)
+    thrusterAmp.gain.linearRampToValueAtTime(
+      0,
+      audioContext.currentTime + releaseTime
+    )
+    thrusterStop = setTimeout(() => {
+      thrusterSource.stop()
+    }, releaseTime * 1000 + 1000)
+  }
+}
+
 // Set event listeners
 const KEYS = {
   ArrowLeft: false,
@@ -804,6 +876,7 @@ window.addEventListener("focus", () => {
 })
 window.addEventListener("blur", () => {
   STATE.running = false
+  playThruster(false)
 })
 window.addEventListener("resize", () => {
   STATE.rendered = false
