@@ -412,6 +412,9 @@ const _tick = debugTimer("tick: ", function () {
             ) /
             (1 / ship.mass +
               vec2.dot(shipPointPerp, collisionNormal) ** 2 / ship.inertia)
+          if (impulse > 0.3) {
+            collisionNoise(Math.log(1 + impulse / 5))
+          }
           ship.health -= Math.max(0, (impulse - 2) / shipStrength)
           if (ship.health <= 0 && !ship.destroyed) {
             ship.destroyed = true
@@ -789,11 +792,22 @@ function render() {
 /** @type {AudioContext} */
 let audioContext
 /** @type {AudioBuffer} */
-let thrusterBuffer
+let noiseBuffer
+const noiseDuration = 1
 
 function initAudio() {
   if (audioContext) return
   audioContext = new AudioContext()
+
+  const noiseBufferSize = audioContext.sampleRate * noiseDuration
+  noiseBuffer = new AudioBuffer({
+    length: noiseBufferSize,
+    sampleRate: audioContext.sampleRate,
+  })
+  const noiseBufferData = noiseBuffer.getChannelData(0)
+  for (let i = 0; i < noiseBufferSize; i++) {
+    noiseBufferData[i] = Math.random() * 2 - 1
+  }
 }
 
 function createThrusterSource(frequency, volume) {
@@ -805,7 +819,6 @@ function createThrusterSource(frequency, volume) {
   let thrusterStop
   const attackTime = 0.01
   const releaseTime = 0.2
-  const thrusterDuration = 0.5
 
   document.addEventListener("blur", () => {
     play(false)
@@ -814,29 +827,18 @@ function createThrusterSource(frequency, volume) {
   return function play(on) {
     if (!audioContext) return
 
-    if (!thrusterBuffer) {
-      const thrusterBufferSize = audioContext.sampleRate * thrusterDuration
-      thrusterBuffer = new AudioBuffer({
-        length: thrusterBufferSize,
-        sampleRate: audioContext.sampleRate,
-      })
-      const thrusterBufferData = thrusterBuffer.getChannelData(0)
-      for (let i = 0; i < thrusterBufferSize; i++) {
-        thrusterBufferData[i] = Math.random() * 2 - 1
-      }
-    }
-
     if (on && !thrusterSource) {
       thrusterStop = undefined
       thrusterSource = new AudioBufferSourceNode(audioContext, {
-        buffer: thrusterBuffer,
+        buffer: noiseBuffer,
         loop: true,
-        loopEnd: thrusterDuration,
+        loopEnd: noiseDuration,
       })
       const bandpass = new BiquadFilterNode(audioContext, {
         type: "bandpass",
         frequency,
         Q: 0.5,
+        gain: 0.2,
       })
       thrusterAmp = audioContext.createGain()
       thrusterAmp.gain.value = 0
@@ -875,6 +877,25 @@ function createThrusterSource(frequency, volume) {
       }, releaseTime * 1000 + 1000)
     }
   }
+}
+
+function collisionNoise(volume) {
+  if (!audioContext) return
+
+  const noiseSource = new AudioBufferSourceNode(audioContext, {
+    buffer: noiseBuffer,
+  })
+  const bandpass = new BiquadFilterNode(audioContext, {
+    type: "bandpass",
+    frequency: 40,
+    Q: 0.2,
+    gain: 0.2,
+  })
+  const amp = audioContext.createGain()
+  amp.gain.setValueAtTime(volume, audioContext.currentTime)
+  amp.gain.linearRampToValueAtTime(0, audioContext.currentTime + 0.1)
+  noiseSource.connect(bandpass).connect(amp).connect(audioContext.destination)
+  noiseSource.start()
 }
 
 // Set event listeners
