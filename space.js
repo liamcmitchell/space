@@ -50,6 +50,9 @@ function debugSlider(label, value) {
  * @prop {number} angle
  * @prop {number} force
  * @prop {boolean} on
+ * @prop {(boolean) => void} noise
+ * @prop {string} key
+ * @prop {string} touch
  */
 
 /**
@@ -303,13 +306,12 @@ const _tick = debugTimer("tick: ", function () {
 
   setSystemBodies(SYSTEM, STATE.time, STATE.bodies)
 
-  ship.thrusters[0].on =
-    !ship.destroyed && (KEYS["ArrowUp"] || touchAreas.center.touched)
-  ship.thrusters[1].on =
-    !ship.destroyed && (KEYS["ArrowLeft"] || touchAreas.left.touched)
-  ship.thrusters[2].on =
-    !ship.destroyed && (KEYS["ArrowRight"] || touchAreas.right.touched)
-  playThruster(ship.thrusters.some((t) => t.on))
+  for (const thruster of ship.thrusters) {
+    thruster.on =
+      !ship.destroyed &&
+      (KEYS[thruster.key] || touchAreas[thruster.touch].touched)
+    thruster.noise(thruster.on)
+  }
 
   if (ship.destroyed) {
     // Increment destroyed counter
@@ -784,74 +786,94 @@ function render() {
   requestAnimationFrame(render)
 }
 
-const audioContext = new AudioContext()
-/** @type {AudioBufferSourceNode} */
-let thrusterSource
-/** @type {GainNode} */
-let thrusterAmp
-/** @type {ReturnType<typeof setTimeout>} */
-let thrusterStop
-const attackTime = 0.1
-const releaseTime = 0.2
-const thrusterDuration = 1
-const thrusterBufferSize = audioContext.sampleRate * thrusterDuration
-const thrusterBuffer = new AudioBuffer({
-  length: thrusterBufferSize,
-  sampleRate: audioContext.sampleRate,
-})
-const thrusterBufferData = thrusterBuffer.getChannelData(0)
-for (let i = 0; i < thrusterBufferSize; i++) {
-  thrusterBufferData[i] = Math.random() * 2 - 1
+/** @type {AudioContext} */
+let audioContext
+/** @type {AudioBuffer} */
+let thrusterBuffer
+
+function initAudio() {
+  if (audioContext) return
+  audioContext = new AudioContext()
 }
-function playThruster(on) {
-  if (on && !thrusterSource) {
-    thrusterStop = undefined
-    thrusterSource = new AudioBufferSourceNode(audioContext, {
-      buffer: thrusterBuffer,
-      loop: true,
-      loopEnd: thrusterDuration,
-    })
-    const bandpass = new BiquadFilterNode(audioContext, {
-      type: "bandpass",
-      frequency: 100,
-      Q: 0.5,
-    })
-    thrusterAmp = audioContext.createGain()
-    thrusterAmp.gain.value = 0
-    thrusterAmp.gain.linearRampToValueAtTime(
-      1,
-      audioContext.currentTime + attackTime
-    )
-    thrusterSource
-      .connect(bandpass)
-      .connect(thrusterAmp)
-      .connect(audioContext.destination)
-    thrusterSource.start()
-    thrusterSource.addEventListener("ended", () => {
-      thrusterSource = undefined
-      thrusterAmp = undefined
+
+function createThrusterSource(frequency, volume) {
+  /** @type {AudioBufferSourceNode} */
+  let thrusterSource
+  /** @type {GainNode} */
+  let thrusterAmp
+  /** @type {ReturnType<typeof setTimeout>} */
+  let thrusterStop
+  const attackTime = 0.01
+  const releaseTime = 0.2
+  const thrusterDuration = 0.5
+
+  document.addEventListener("blur", () => {
+    play(false)
+  })
+
+  return function play(on) {
+    if (!audioContext) return
+
+    if (!thrusterBuffer) {
+      const thrusterBufferSize = audioContext.sampleRate * thrusterDuration
+      thrusterBuffer = new AudioBuffer({
+        length: thrusterBufferSize,
+        sampleRate: audioContext.sampleRate,
+      })
+      const thrusterBufferData = thrusterBuffer.getChannelData(0)
+      for (let i = 0; i < thrusterBufferSize; i++) {
+        thrusterBufferData[i] = Math.random() * 2 - 1
+      }
+    }
+
+    if (on && !thrusterSource) {
       thrusterStop = undefined
-    })
-  }
-  if (on && thrusterStop) {
-    clearTimeout(thrusterStop)
-    thrusterStop = undefined
-    thrusterAmp.gain.value = thrusterAmp.gain.value
-    thrusterAmp.gain.cancelAndHoldAtTime(audioContext.currentTime)
-    thrusterAmp.gain.linearRampToValueAtTime(
-      1,
-      audioContext.currentTime + attackTime
-    )
-  }
-  if (!on && thrusterSource && !thrusterStop) {
-    thrusterAmp.gain.cancelAndHoldAtTime(audioContext.currentTime)
-    thrusterAmp.gain.linearRampToValueAtTime(
-      0,
-      audioContext.currentTime + releaseTime
-    )
-    thrusterStop = setTimeout(() => {
-      thrusterSource.stop()
-    }, releaseTime * 1000 + 1000)
+      thrusterSource = new AudioBufferSourceNode(audioContext, {
+        buffer: thrusterBuffer,
+        loop: true,
+        loopEnd: thrusterDuration,
+      })
+      const bandpass = new BiquadFilterNode(audioContext, {
+        type: "bandpass",
+        frequency,
+        Q: 0.5,
+      })
+      thrusterAmp = audioContext.createGain()
+      thrusterAmp.gain.value = 0
+      thrusterAmp.gain.linearRampToValueAtTime(
+        volume,
+        audioContext.currentTime + attackTime
+      )
+      thrusterSource
+        .connect(bandpass)
+        .connect(thrusterAmp)
+        .connect(audioContext.destination)
+      thrusterSource.start()
+    }
+
+    if (on && thrusterStop) {
+      clearTimeout(thrusterStop)
+      thrusterStop = undefined
+      thrusterAmp.gain.value = thrusterAmp.gain.value
+      thrusterAmp.gain.cancelAndHoldAtTime(audioContext.currentTime)
+      thrusterAmp.gain.linearRampToValueAtTime(
+        volume,
+        audioContext.currentTime + attackTime
+      )
+    }
+    if (!on && thrusterSource && !thrusterStop) {
+      thrusterAmp.gain.cancelAndHoldAtTime(audioContext.currentTime)
+      thrusterAmp.gain.linearRampToValueAtTime(
+        0,
+        audioContext.currentTime + releaseTime
+      )
+      thrusterStop = setTimeout(() => {
+        thrusterSource.stop()
+        thrusterSource = undefined
+        thrusterAmp = undefined
+        thrusterStop = undefined
+      }, releaseTime * 1000 + 1000)
+    }
   }
 }
 
@@ -862,6 +884,7 @@ const KEYS = {
   ArrowRight: false,
 }
 document.addEventListener("keydown", (event) => {
+  initAudio()
   KEYS[event.key] = true
   if (event.key === "r") {
     reset()
@@ -876,7 +899,6 @@ window.addEventListener("focus", () => {
 })
 window.addEventListener("blur", () => {
   STATE.running = false
-  playThruster(false)
 })
 window.addEventListener("resize", () => {
   STATE.rendered = false
@@ -894,6 +916,7 @@ const touchAreas = {
  * @param {TouchEvent} event
  */
 function handleTouch(event) {
+  initAudio()
   const { innerWidth, innerHeight } = window
   for (const area in touchAreas) {
     touchAreas[area].touched = false
@@ -977,16 +1000,41 @@ function reset() {
     velocity: bodyToStartOn.velocity,
     angle: Math.PI,
     angularVelocity: 0,
-    thrusters: [
-      { location: [0, 0], angle: 0, force: 0.5, on: false },
-      { location: [0, 1.5], angle: Math.PI / 2, force: 0.2, on: false },
-      { location: [0, 1.5], angle: -Math.PI / 2, force: 0.2, on: false },
-    ],
     health: 1,
     landed: false,
+    thrusters: [
+      {
+        location: [0, 0],
+        angle: 0,
+        force: 0.5,
+        on: false,
+        noise: createThrusterSource(100, 0.5),
+        key: "ArrowUp",
+        touch: "center",
+      },
+      {
+        location: [0, 1.5],
+        angle: Math.PI / 2,
+        force: 0.2,
+        on: false,
+        noise: createThrusterSource(400, 0.1),
+        key: "ArrowLeft",
+        touch: "left",
+      },
+      {
+        location: [0, 1.5],
+        angle: -Math.PI / 2,
+        force: 0.2,
+        on: false,
+        noise: createThrusterSource(400, 0.1),
+        key: "ArrowRight",
+        touch: "right",
+      },
+    ],
   }
 }
 
 reset()
-render(true)
+tick()
+render()
 setInterval(tick, 16)
