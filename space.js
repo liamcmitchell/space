@@ -810,80 +810,81 @@ function initAudio() {
   }
 }
 
-function createThrusterSource(frequency, volume) {
-  /** @type {AudioBufferSourceNode} */
-  let thrusterSource
+/**
+ * @param {(amp: GainNode) => () => void} connectSource
+ * @returns {(volume: number, attack: number, sustain: number, release: number) => void}
+ */
+function createNoise(connectSource) {
+  /** @type {() => void} */
+  let stopSource
   /** @type {GainNode} */
-  let thrusterAmp
+  let amp
   /** @type {ReturnType<typeof setTimeout>} */
-  let thrusterStop
-  const attackTime = 0.01
-  const releaseTime = 0.2
+  let stopTimeout
 
-  document.addEventListener("blur", () => {
-    play(false)
-  })
-
-  return function play(on) {
+  return function play(volume, attack, sustain, release) {
     if (!audioContext) return
 
-    if (on && !thrusterSource) {
-      thrusterStop = undefined
-      thrusterSource = new AudioBufferSourceNode(audioContext, {
-        buffer: noiseBuffer,
-        loop: true,
-        loopEnd: noiseDuration,
-      })
-      const bandpass = new BiquadFilterNode(audioContext, {
-        type: "bandpass",
-        frequency,
-        Q: 0.5,
-        gain: 0.2,
-      })
-      thrusterAmp = audioContext.createGain()
-      thrusterAmp.gain.value = 0
-      thrusterAmp.gain.linearRampToValueAtTime(
+    if (volume > 0 || (amp && amp.gain.value > 0)) {
+      if (!stopSource) {
+        amp = audioContext.createGain()
+        amp.gain.value = 0
+        amp.connect(audioContext.destination)
+        stopSource = connectSource(amp)
+      }
+      amp.gain.cancelAndHoldAtTime(audioContext.currentTime)
+      amp.gain.linearRampToValueAtTime(
         volume,
-        audioContext.currentTime + attackTime
+        audioContext.currentTime + attack
       )
-      thrusterSource
-        .connect(bandpass)
-        .connect(thrusterAmp)
-        .connect(audioContext.destination)
-      thrusterSource.start()
-    }
-
-    if (on && thrusterStop) {
-      clearTimeout(thrusterStop)
-      thrusterStop = undefined
-      thrusterAmp.gain.value = thrusterAmp.gain.value
-      thrusterAmp.gain.cancelAndHoldAtTime(audioContext.currentTime)
-      thrusterAmp.gain.linearRampToValueAtTime(
+      amp.gain.setValueAtTime(
         volume,
-        audioContext.currentTime + attackTime
+        audioContext.currentTime + attack + sustain
       )
-    }
-    if (!on && thrusterSource && !thrusterStop) {
-      thrusterAmp.gain.cancelAndHoldAtTime(audioContext.currentTime)
-      thrusterAmp.gain.linearRampToValueAtTime(
+      amp.gain.linearRampToValueAtTime(
         0,
-        audioContext.currentTime + releaseTime
+        audioContext.currentTime + attack + sustain + release
       )
-      thrusterStop = setTimeout(() => {
-        thrusterSource.stop()
-        thrusterSource = undefined
-        thrusterAmp = undefined
-        thrusterStop = undefined
-      }, releaseTime * 1000 + 1000)
+      clearTimeout(stopTimeout)
+      stopTimeout = setTimeout(() => {
+        stopSource()
+        stopSource = undefined
+        amp = undefined
+      }, (length + 1) * 1000)
     }
   }
 }
 
-function collisionNoise(volume) {
-  if (!audioContext) return
+function createThrusterSource(frequency, volume) {
+  const playNoise = createNoise((amp) => {
+    const source = new AudioBufferSourceNode(audioContext, {
+      buffer: noiseBuffer,
+      loop: true,
+      loopEnd: noiseDuration,
+    })
+    const bandpass = new BiquadFilterNode(audioContext, {
+      type: "bandpass",
+      frequency,
+      Q: 0.5,
+      gain: 0.2,
+    })
+    source.connect(bandpass).connect(amp)
+    source.start()
+    return () => {
+      source.stop
+    }
+  })
 
-  const noiseSource = new AudioBufferSourceNode(audioContext, {
+  return function play(on) {
+    playNoise(on ? volume : 0, 0.01, 0.1, 0.1)
+  }
+}
+
+const _collisionNoise = createNoise((amp) => {
+  const source = new AudioBufferSourceNode(audioContext, {
     buffer: noiseBuffer,
+    loop: true,
+    loopEnd: noiseDuration,
   })
   const bandpass = new BiquadFilterNode(audioContext, {
     type: "bandpass",
@@ -891,11 +892,15 @@ function collisionNoise(volume) {
     Q: 0.2,
     gain: 0.2,
   })
-  const amp = audioContext.createGain()
-  amp.gain.setValueAtTime(volume, audioContext.currentTime)
-  amp.gain.linearRampToValueAtTime(0, audioContext.currentTime + 0.1)
-  noiseSource.connect(bandpass).connect(amp).connect(audioContext.destination)
-  noiseSource.start()
+  source.connect(bandpass).connect(amp)
+  source.start()
+  return () => {
+    source.stop()
+  }
+})
+
+function collisionNoise(volume) {
+  _collisionNoise(volume, 0.01, 0, 0.2)
 }
 
 // Set event listeners
@@ -920,6 +925,9 @@ window.addEventListener("focus", () => {
 })
 window.addEventListener("blur", () => {
   STATE.running = false
+  for (const key in KEYS) {
+    KEYS[key] = false
+  }
 })
 window.addEventListener("resize", () => {
   STATE.rendered = false
