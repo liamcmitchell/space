@@ -794,19 +794,37 @@ let audioContext
 /** @type {AudioBuffer} */
 let noiseBuffer
 const noiseDuration = 1
+/** @type {PeriodicWave} */
+let bongWave
+/** @type {Float32Array} */
+let distortionCurve
 
 function initAudio() {
   if (audioContext) return
   audioContext = new AudioContext()
+  const { sampleRate } = audioContext
 
-  const noiseBufferSize = audioContext.sampleRate * noiseDuration
+  const noiseBufferSize = sampleRate * noiseDuration
   noiseBuffer = new AudioBuffer({
     length: noiseBufferSize,
-    sampleRate: audioContext.sampleRate,
+    sampleRate: sampleRate,
   })
   const noiseBufferData = noiseBuffer.getChannelData(0)
   for (let i = 0; i < noiseBufferSize; i++) {
     noiseBufferData[i] = Math.random() * 2 - 1
+  }
+
+  bongWave = audioContext.createPeriodicWave(
+    [0.14, 0.28, 0.42, 0.57, 0.71, 0.85],
+    [0, 0, 0, 0, 0, 0]
+  )
+
+  const k = 50
+  distortionCurve = new Float32Array(audioContext.sampleRate)
+  const deg = Math.PI / 180
+  for (let i = 0; i < audioContext.sampleRate; i++) {
+    const x = (i * 2) / audioContext.sampleRate - 1
+    distortionCurve[i] = ((3 + k) * x * 20 * deg) / (Math.PI + k * Math.abs(x))
   }
 }
 
@@ -841,9 +859,10 @@ function createNoise(connectSource) {
         volume,
         audioContext.currentTime + attack + sustain
       )
-      amp.gain.linearRampToValueAtTime(
+      amp.gain.setTargetAtTime(
         0,
-        audioContext.currentTime + attack + sustain + release
+        audioContext.currentTime + attack + sustain,
+        release / 3
       )
       clearTimeout(stopTimeout)
       stopTimeout = setTimeout(() => {
@@ -881,26 +900,23 @@ function createThrusterSource(frequency, volume) {
 }
 
 const _collisionNoise = createNoise((amp) => {
-  const source = new AudioBufferSourceNode(audioContext, {
-    buffer: noiseBuffer,
-    loop: true,
-    loopEnd: noiseDuration,
+  const bongSource = new OscillatorNode(audioContext, {
+    type: "custom",
+    periodicWave: bongWave,
+    frequency: 100,
   })
-  const bandpass = new BiquadFilterNode(audioContext, {
-    type: "bandpass",
-    frequency: 40,
-    Q: 0.2,
-    gain: 0.2,
+  const distortion = new WaveShaperNode(audioContext, {
+    curve: distortionCurve,
   })
-  source.connect(bandpass).connect(amp)
-  source.start()
+  bongSource.connect(distortion).connect(amp)
+  bongSource.start()
   return () => {
-    source.stop()
+    bongSource.stop()
   }
 })
 
 function collisionNoise(volume) {
-  _collisionNoise(volume, 0.01, 0, 0.2)
+  _collisionNoise(volume, 1 / 60, 1 / 60, 0.2)
 }
 
 // Set event listeners
@@ -912,9 +928,14 @@ const KEYS = {
 document.addEventListener("keydown", (event) => {
   initAudio()
   KEYS[event.key] = true
-  if (event.key === "r") {
-    reset()
-    tick(true)
+  switch (event.key) {
+    case "r":
+      reset()
+      tick(true)
+      break
+
+    default:
+      break
   }
 })
 document.addEventListener("keyup", (event) => {
