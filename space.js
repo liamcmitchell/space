@@ -232,47 +232,42 @@ function reset() {
     mass: 1,
     radius: shipRadius,
     inertia: (2 * 1 * shipRadius ** 2) / 5,
-    location: vec2.add(
-      vec2.create(),
-      bodyToStartOn.location,
-      vec2.fromValues(1, bodyToStartOn.radius + shipRadius - 1)
-    ),
-    velocity: vec2.clone(bodyToStartOn.velocity),
+    location: vec2.add([0, 0], bodyToStartOn.location, [
+      1,
+      bodyToStartOn.radius + shipRadius - 1,
+    ]),
+    velocity: [...bodyToStartOn.velocity],
     angle: Math.PI / 2,
     angularVelocity: 0,
     health: 1,
     points: shipBody,
     thrusters: [
       {
-        location: vec2.create(),
+        location: [0, 0],
         angle: Math.PI,
         force: 0.5,
-        on: false,
-        noise: createThrusterSource(100, 0.5),
         key: "ArrowUp",
         touch: "center",
       },
       {
-        location: vec2.fromValues(1.5, 0),
+        location: [1.5, 0],
         angle: Math.PI / 2,
         force: 0.2,
-        on: false,
-        noise: createThrusterSource(400, 0.1),
         key: "ArrowRight",
         touch: "right",
       },
       {
-        location: vec2.fromValues(1.5, 0),
+        location: [1.5, 0],
         angle: -Math.PI / 2,
         force: 0.2,
-        on: false,
-        noise: createThrusterSource(400, 0.1),
         key: "ArrowLeft",
         touch: "left",
       },
     ],
   }
   STATE.ship.thrusters.forEach((thruster) => {
+    thruster.on = false
+    thruster.noise = createThrusterSource(50 / thruster.force, thruster.force)
     thruster.transform = createTransform(
       thruster.angle,
       thruster.location,
@@ -287,7 +282,7 @@ function reset() {
       radius: 1,
       points: createCirclePositions(3 + (STATE.bodies.length % 4), 1),
       inertia: (2 * 1 * 2 ** 2) / 5,
-      location: vec2.add(vec2.create(), bodyToStartOn.location, start),
+      location: vec2.add([0, 0], bodyToStartOn.location, start),
       velocity: [...bodyToStartOn.velocity],
       angle: STATE.bodies.length,
       angularVelocity: 0,
@@ -301,7 +296,7 @@ function reset() {
       radius: 1,
       points: createCirclePositions(3 + (STATE.bodies.length % 4), 1),
       inertia: (2 * 1 * 2 ** 2) / 5,
-      location: vec2.add(vec2.create(), bodyToStartOn.location, start),
+      location: vec2.add([0, 0], bodyToStartOn.location, start),
       velocity: [...bodyToStartOn.velocity],
       angle: STATE.bodies.length,
       angularVelocity: 0,
@@ -314,7 +309,7 @@ function reset() {
       mass: 0.5,
       radius: 0.5,
       inertia: (2 * 1 * 0.5 ** 2) / 5,
-      location: vec2.add(vec2.create(), bodyToStartOn.location, start),
+      location: vec2.add([0, 0], bodyToStartOn.location, start),
       velocity: [...bodyToStartOn.velocity],
       angle: 0,
       angularVelocity: 0,
@@ -325,10 +320,10 @@ function reset() {
     body.inertia ??= Infinity
     body.angle ??= 0
     body.angularVelocity ??= 0
-    body.force = vec2.create()
+    body.force = [0, 0]
     body.torque = 0
-    body.points = body.points?.map((point) => vec2.fromValues(...point))
-    body.absolutePoints = body.points?.map(() => vec2.create())
+    body.points = body.points?.map((point) => [...point])
+    body.absolutePoints = body.points?.map(() => [0, 0])
     body.absolutePointsTime = -1
   })
 }
@@ -374,8 +369,8 @@ function setSystemBodies(system, time, bodies, index = 0, parent) {
       fixed: true,
       mass: system.mass,
       radius: getBodyRadius(system.mass),
-      location: vec2.create(),
-      velocity: vec2.create(),
+      location: [0, 0],
+      velocity: [0, 0],
       orbitRadius: system.orbitRadius,
       orbitCenter: parent?.location,
       landed: false,
@@ -497,16 +492,17 @@ const _tick = debugTimer("tick", function () {
       ) / timeInc
   }
 
-  const difference = vec2.create()
-  const collisionTangent = vec2.create()
-  const collisionForce = vec2.create()
-  const aPointPerp = vec2.create()
-  const bPointPerp = vec2.create()
-  const pointRelativeVelocity = vec2.create()
+  const difference = [0, 0]
+  const collisionTangent = [0, 0]
+  const collisionForce = [0, 0]
+  const aPointPerp = [0, 0]
+  const bPointPerp = [0, 0]
+  const pointRelativeVelocity = [0, 0]
+  const bodiesLength = bodies.length
 
-  for (let i = 0; i < bodies.length; i++) {
+  for (let i = 0; i < bodiesLength; i++) {
     const a = bodies[i]
-    for (let j = i + 1; j < bodies.length; j++) {
+    for (let j = i + 1; j < bodiesLength; j++) {
       const b = bodies[j]
 
       if (a.fixed && b.fixed) continue
@@ -525,7 +521,11 @@ const _tick = debugTimer("tick", function () {
 
       const colls = collisions(a, b)
       for (let k = 0; k < colls.length; k++) {
-        const [contactPoint, collisionNormal, collisionDepth] = colls[k]
+        const {
+          0: contactPoint,
+          1: collisionNormal,
+          2: collisionDepth,
+        } = colls[k]
 
         perpendicular(collisionTangent, collisionNormal)
         vec2.zero(collisionForce)
@@ -711,11 +711,11 @@ function collisionsCircleCircle(a, b) {
 
   if (depth >= 0) return []
 
-  const normal = vec2.create()
+  const normal = [0, 0]
   vec2.subtract(normal, b.location, a.location)
   vec2.normalize(normal, normal)
 
-  const point = vec2.create()
+  const point = [0, 0]
   vec2.scaleAndAdd(point, a.location, normal, a.radius + depth)
 
   return [[point, normal, depth]]
@@ -738,7 +738,7 @@ function collisionsCirclePoly(circle, poly) {
     const closest = closestPointOnLine(circle.location, a, b, length)
     const closestDistance = vec2.distance(circle.location, closest)
     if (vec2.distance(a, circle.location) < circle.radius) {
-      const difference = vec2.subtract(vec2.create(), a, circle.location)
+      const difference = vec2.subtract([0, 0], a, circle.location)
       const depth = vec2.length(difference) - circle.radius
       collisions.push([a, vec2.normalize(difference, difference), depth])
     }
@@ -746,7 +746,7 @@ function collisionsCirclePoly(circle, poly) {
       closestDistance < circle.radius &&
       vec2.distance(a, closest) + vec2.distance(closest, b) < length + 0.01
     ) {
-      const difference = vec2.subtract(vec2.create(), closest, circle.location)
+      const difference = vec2.subtract([0, 0], closest, circle.location)
       const depth = vec2.length(difference) - circle.radius
       collisions.push([closest, vec2.normalize(difference, difference), depth])
     }
@@ -756,105 +756,94 @@ function collisionsCirclePoly(circle, poly) {
 }
 
 function collisionsPolyPoly(a, b) {
-  const intersectingPoints = []
+  /** @type {[Vector, number, number, number][]} [point, aIndex, bIndex, angleFromCenter][] */
+  const intersections = []
   const aPoints = getPoints(a)
   const bPoints = getPoints(b)
+  const aLength = aPoints.length
+  const bLength = bPoints.length
   const aInsideB = []
   const bInsideA = []
 
-  for (let i = 0; i < aPoints.length; i++) {
-    const a1 = aPoints[i]
-    const a2 = aPoints[(i + 1) % aPoints.length]
-    for (let j = 0; j < bPoints.length; j++) {
-      const b1 = bPoints[j]
-      const b2 = bPoints[(j + 1) % bPoints.length]
-      const intersection = lineIntersection(
-        a1[0],
-        a1[1],
-        a2[0],
-        a2[1],
-        b1[0],
-        b1[1],
-        b2[0],
-        b2[1]
-      )
-      if (intersection) {
-        intersectingPoints.push([intersection, i, j, 0])
+  for (let ai = 0; ai < aLength; ai++) {
+    const { 0: a1x, 1: a1y } = aPoints[ai]
+    const { 0: a2x, 1: a2y } = aPoints[(ai + 1) % aLength]
+    for (let bi = 0; bi < bLength; bi++) {
+      const { 0: b1x, 1: b1y } = bPoints[bi]
+      const { 0: b2x, 1: b2y } = bPoints[(bi + 1) % bLength]
+      const point = lineIntersection(a1x, a1y, a2x, a2y, b1x, b1y, b2x, b2y)
+      if (point) {
+        intersections.push([point, ai, bi, 0])
       }
-      if (linePointSideCheck(a1, b1, b2)) {
-        aInsideB[i] = !aInsideB[i]
+      if (linePointSideCheck(a1x, a1y, b1x, b1y, b2x, b2y)) {
+        aInsideB[ai] = !aInsideB[ai]
       }
-      if (linePointSideCheck(b1, a1, a2)) {
-        bInsideA[j] = !bInsideA[j]
+      if (linePointSideCheck(b1x, b1y, a1x, a1y, a2x, a2y)) {
+        bInsideA[bi] = !bInsideA[bi]
       }
     }
   }
-  for (let i = 0; i < aInsideB.length; i++) {
-    if (aInsideB[i]) {
-      intersectingPoints.push([aPoints[i], i, -1])
+  for (let ai = 0; ai < aLength; ai++) {
+    if (aInsideB[ai]) {
+      intersections.push([aPoints[ai], ai, -1, 0])
     }
   }
-  for (let j = 0; j < bInsideA.length; j++) {
-    if (bInsideA[j]) {
-      intersectingPoints.push([bPoints[j], -1, j, 0])
+  for (let bi = 0; bi < bLength; bi++) {
+    if (bInsideA[bi]) {
+      intersections.push([bPoints[bi], -1, bi, 0])
     }
   }
 
-  if (!intersectingPoints.length) return intersectingPoints
+  const iLength = intersections.length
+  if (!iLength) return intersections
 
-  const intersectionAverage = vec2.create()
-  for (let i = 0; i < intersectingPoints.length; i++) {
-    vec2.add(intersectionAverage, intersectionAverage, intersectingPoints[i][0])
+  // Calculate rough center by averaging intersecting points.
+  const center = [0, 0]
+  for (let i = 0; i < iLength; i++) {
+    vec2.add(center, center, intersections[i][0])
   }
-  vec2.scale(
-    intersectionAverage,
-    intersectionAverage,
-    1 / intersectingPoints.length
-  )
+  vec2.scale(center, center, 1 / iLength)
 
-  for (let i = 0; i < intersectingPoints.length; i++) {
-    intersectingPoints[i][3] = lineAngle(
-      intersectionAverage,
-      intersectingPoints[i][0]
-    )
+  // Calculate angle to rough center.
+  for (let i = 0; i < iLength; i++) {
+    intersections[i][3] = lineAngle(center, intersections[i][0])
   }
-  intersectingPoints.sort((a, b) => a[3] - b[3])
+  // Sort by angle (counter-clockwise).
+  intersections.sort((a, b) => a[3] - b[3])
 
-  const normal = vec2.create()
-  for (let i = 0; i < intersectingPoints.length; i++) {
-    const intersection1 = intersectingPoints[i]
-    const intersection2 =
-      intersectingPoints[(i + 1) % intersectingPoints.length]
-    const p1 = intersection1[0]
-    const p2 = intersection2[0]
-    const isA =
-      intersection1[2] === -1 ||
-      intersection2[2] === -1 ||
-      (intersection1[1] !== -1 && intersection1[1] === intersection2[1])
+  // Calculate normal by adding all A lines and subtracting all B.
+  const normal = [0, 0]
+  for (let i = 0; i < iLength; i++) {
+    const { 0: p1, 1: p1a, 2: p1b } = intersections[i]
+    const { 0: p2, 1: p2a, 2: p2b } = intersections[(i + 1) % iLength]
+    const isA = p1b === -1 || p2b === -1 || (p1a !== -1 && p1a === p2a)
     vec2.add(normal, normal, isA ? p1 : p2)
     vec2.subtract(normal, normal, isA ? p2 : p1)
   }
   vec2.normalize(normal, normal)
   perpendicular(normal, normal)
 
-  const intersectionCenter = vec2.create()
+  // Calculate precise center using triangles.
+  vec2.zero(center)
+  const subCenter = [0, 0]
   let area = 0
-  for (let i = 1; i < intersectingPoints.length - 1; i++) {
-    const p1 = intersectingPoints[0][0]
-    const p2 = intersectingPoints[i][0]
-    const p3 = intersectingPoints[i + 1][0]
+  for (let i = 1; i < iLength - 1; i++) {
+    const p1 = intersections[0][0]
+    const p2 = intersections[i][0]
+    const p3 = intersections[i + 1][0]
     const subArea = triangleArea(p1, p2, p3) || 0.000001
-    const center = triangleCenter(p1, p2, p3)
+    triangleCenter(subCenter, p1, p2, p3)
     area += subArea
-    vec2.scaleAndAdd(intersectionCenter, intersectionCenter, center, subArea)
+    vec2.scaleAndAdd(center, center, subCenter, subArea)
   }
-  vec2.scale(intersectionCenter, intersectionCenter, 1 / area)
+  vec2.scale(center, center, 1 / area)
 
+  // Calculate depth by rotating points to normal and finding smallest/largest x.
   let smallestX = Infinity
   let largestX = -Infinity
   const normalAngle = vectorAngle(normal)
-  for (let i = 0; i < intersectingPoints.length; i++) {
-    const point = intersectingPoints[i][0]
+  for (let i = 0; i < iLength; i++) {
+    const point = intersections[i][0]
     const rotatedX =
       point[0] * Math.cos(-normalAngle) - point[1] * Math.sin(-normalAngle)
     smallestX = Math.min(rotatedX, smallestX)
@@ -862,25 +851,24 @@ function collisionsPolyPoly(a, b) {
   }
   const depth = smallestX - largestX
 
-  return [[intersectionCenter, normal, depth]]
+  return [[center, normal, depth]]
 }
 
 function triangleArea(p1, p2, p3) {
   return (p2[0] - p1[0]) * (p3[1] - p1[1]) - (p2[1] - p1[1]) * (p3[0] - p1[0])
 }
 
-function triangleCenter(p1, p2, p3) {
-  const center = vec2.create()
-  vec2.lerp(center, p2, p3, 0.5)
-  vec2.lerp(center, center, p1, 1 / 3)
-  return center
+function triangleCenter(out, p1, p2, p3) {
+  vec2.lerp(out, p2, p3, 0.5)
+  vec2.lerp(out, out, p1, 1 / 3)
+  return out
 }
 
 // https://www.jeffreythompson.org/collision-detection/poly-point.php
-function linePointSideCheck(p, a1, a2) {
+function linePointSideCheck(px, py, a1x, a1y, a2x, a2y) {
   return (
-    ((a1[1] >= p[1] && a2[1] < p[1]) || (a1[1] < p[1] && a2[1] >= p[1])) &&
-    p[0] < ((a2[0] - a1[0]) * (p[1] - a1[1])) / (a2[1] - a1[1]) + a1[0]
+    ((a1y >= py && a2y < py) || (a1y < py && a2y >= py)) &&
+    px < ((a2x - a1x) * (py - a1y)) / (a2y - a1y) + a1x
   )
 }
 
@@ -894,7 +882,7 @@ function lineIntersection(a1x, a1y, a2x, a2y, b1x, b1y, b2x, b2y) {
     ((b2y - b1y) * (a2x - a1x) - (b2x - b1x) * (a2y - a1y))
 
   if (uA >= 0 && uA <= 1 && uB >= 0 && uB <= 1) {
-    return vec2.fromValues(a1x + uA * (a2x - a1x), a1y + uA * (a2y - a1y))
+    return [a1x + uA * (a2x - a1x), a1y + uA * (a2y - a1y)]
   }
 }
 
@@ -939,7 +927,7 @@ function closestPointOnLine(target, a, b, length = vec2.distance(a, b)) {
   const dot =
     ((target[0] - a[0]) * (b[0] - a[0]) + (target[1] - a[1]) * (b[1] - a[1])) /
     length ** 2
-  return vec2.fromValues(a[0] + dot * (b[0] - a[0]), a[1] + dot * (b[1] - a[1]))
+  return [a[0] + dot * (b[0] - a[0]), a[1] + dot * (b[1] - a[1])]
 }
 
 /**
