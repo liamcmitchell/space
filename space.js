@@ -35,7 +35,7 @@ function debugTimer(label, fn) {
     const start = performance.now()
     const val = fn.apply(this, arguments)
     const time = performance.now() - start
-    averageTime = smooth(averageTime || time, time, 0.95)
+    averageTime = smooth(averageTime || time, time)
     debugValue(label, `${averageTime.toFixed(1)}ms`)
     return val
   }
@@ -340,16 +340,16 @@ function createCirclePositions(stops, radius = 1) {
  * @param {System} system
  * @returns
  */
-function getTotalMass(system) {
+function totalMass(system) {
   let mass = system.mass
   system.children?.forEach((child) => {
-    mass += getTotalMass(child)
+    mass += totalMass(child)
   })
   return mass
 }
 
-function getOrbitVelocity(parentMass, childMass, radius) {
-  const force = getGravityForce(parentMass, childMass, radius)
+function orbitVelocity(parentMass, childMass, radius) {
+  const force = gravityForce(parentMass, childMass, radius)
   return Math.sqrt((force / childMass) * radius)
 }
 
@@ -368,7 +368,7 @@ function setSystemBodies(system, time, bodies, index = 0, parent) {
       type: "circle",
       fixed: true,
       mass: system.mass,
-      radius: getBodyRadius(system.mass),
+      radius: bodyRadius(system.mass),
       location: [0, 0],
       velocity: [0, 0],
       orbitRadius: system.orbitRadius,
@@ -381,9 +381,9 @@ function setSystemBodies(system, time, bodies, index = 0, parent) {
 
   if (parent) {
     if (!system.orbitVelocity) {
-      system.orbitVelocity = getOrbitVelocity(
+      system.orbitVelocity = orbitVelocity(
         parent.mass,
-        getTotalMass(system),
+        totalMass(system),
         system.orbitRadius
       )
     }
@@ -408,7 +408,7 @@ function setSystemBodies(system, time, bodies, index = 0, parent) {
  * @param {number} distance
  * @returns {Vector}
  */
-function getAngleVector(angle, distance) {
+function angleVector(angle, distance) {
   return [Math.cos(angle) * distance, Math.sin(angle) * distance]
 }
 
@@ -417,7 +417,7 @@ function getAngleVector(angle, distance) {
  * @param {number} b
  * @returns {number}
  */
-function getAngleDifference(a, b) {
+function angleDifference(a, b) {
   const diff = (b - a) % (Math.PI * 2)
   if (diff > Math.PI) {
     return diff - Math.PI * 2
@@ -432,7 +432,7 @@ function getAngleDifference(a, b) {
  * @param {number} massB
  * @returns {number}
  */
-function getGravityForce(massA, massB, distance) {
+function gravityForce(massA, massB, distance) {
   return (massA * massB) / distance ** 2
 }
 
@@ -440,7 +440,7 @@ function getGravityForce(massA, massB, distance) {
  * @param {number} mass
  * @returns {number}
  */
-function getBodyRadius(mass) {
+function bodyRadius(mass) {
   return (((mass / Math.PI) * 3) / 2) ** (1 / 3)
 }
 
@@ -482,13 +482,13 @@ const _tick = debugTimer("tick", function () {
     vec2.scaleAndAdd(
       ship.force,
       ship.force,
-      getAngleVector(ship.angle + thruster.angle, -thruster.force),
+      angleVector(ship.angle + thruster.angle, -thruster.force),
       1 / timeInc
     )
     ship.torque +=
       vec2.dot(
         perpendicular([], thruster.location),
-        getAngleVector(thruster.angle, -thruster.force)
+        angleVector(thruster.angle, -thruster.force)
       ) / timeInc
   }
 
@@ -509,7 +509,7 @@ const _tick = debugTimer("tick", function () {
 
       const distance = vec2.distance(a.location, b.location) || 0.0001
 
-      const gravity = getGravityForce(a.mass, b.mass, distance)
+      const gravity = gravityForce(a.mass, b.mass, distance)
 
       if (gravity > 0.01) {
         vec2.subtract(difference, b.location, a.location)
@@ -554,58 +554,54 @@ const _tick = debugTimer("tick", function () {
           pointRelativeVelocity
         )
 
+        // Calculate collision response and separation force together.
+        // https://gamemath.com/book/dynamics.html#collision_response_with_rotations
+        const elasticity = 0.3
+        const collisionResponseVelocity = Math.min(
+          0,
+          velocityIntoNormal * (elasticity + 1)
+        )
         const separationTime = timeInc * 10
         const maxSeparationForce = -0.5
-        const separationForce =
-          Math.max(collisionDepth / separationTime, maxSeparationForce) /
-          (1 / a.mass + 1 / b.mass)
+        const separationVelocity = Math.max(
+          collisionDepth / separationTime,
+          maxSeparationForce
+        )
+        const impulse =
+          (collisionResponseVelocity + separationVelocity) /
+          (1 / a.mass +
+            1 / b.mass +
+            vec2.dot(aPointPerp, collisionNormal) ** 2 / a.inertia +
+            vec2.dot(bPointPerp, collisionNormal) ** 2 / b.inertia)
         vec2.scaleAndAdd(
           collisionForce,
           collisionForce,
           collisionNormal,
-          separationForce
+          impulse
         )
 
-        // Collision
-        if (velocityIntoNormal < 0) {
-          // https://gamemath.com/book/dynamics.html#collision_response_with_rotations
-          const elasticity = 0.3
-          const impulse =
-            (velocityIntoNormal * (elasticity + 1)) /
-            (1 / a.mass +
-              1 / b.mass +
-              vec2.dot(aPointPerp, collisionNormal) ** 2 / a.inertia +
-              vec2.dot(bPointPerp, collisionNormal) ** 2 / b.inertia)
-          vec2.scaleAndAdd(
-            collisionForce,
-            collisionForce,
-            collisionNormal,
-            impulse
-          )
-
-          if (a === ship || b === ship) {
-            const body = a === ship ? b : a
-            if (impulse < -0.2) {
-              const volume = 1 - 1 / (0.05 * -impulse + 1) ** 2
-              collisionNoise(volume)
-            }
-            ship.health -= Math.max(0, (-impulse - 2) / shipStrength)
-            if (ship.health <= 0 && !ship.destroyed) {
-              ship.destroyed = true
-              ship.destroyedFor = 0
-            }
-            if (body.orbitCenter) {
-              body.landed =
-                body.landed ||
-                (Math.abs(ship.angularVelocity) < 1 &&
-                  vec2.distance(ship.velocity, body.velocity) < 0.5 &&
-                  Math.abs(
-                    getAngleDifference(
-                      ship.angle,
-                      lineAngle(body.location, ship.location)
-                    )
-                  ) < 0.2)
-            }
+        if (velocityIntoNormal < 0 && (a === ship || b === ship)) {
+          const body = a === ship ? b : a
+          if (impulse < -0.3) {
+            const volume = 1 - 1 / (0.05 * -impulse + 1) ** 2
+            collisionNoise(volume)
+          }
+          ship.health -= Math.max(0, (-impulse - 2) / shipStrength)
+          if (ship.health <= 0 && !ship.destroyed) {
+            ship.destroyed = true
+            ship.destroyedFor = 0
+          }
+          if (body.orbitCenter) {
+            body.landed =
+              body.landed ||
+              (Math.abs(ship.angularVelocity) < 1 &&
+                vec2.distance(ship.velocity, body.velocity) < 0.5 &&
+                Math.abs(
+                  angleDifference(
+                    ship.angle,
+                    lineAngle(body.location, ship.location)
+                  )
+                ) < 0.2)
           }
         }
 
@@ -618,10 +614,8 @@ const _tick = debugTimer("tick", function () {
             vec2.dot(bPointPerp, collisionTangent) ** 2 / b.inertia)
         const kineticFriction = 0.5
         const frictionForce =
-          Math.min(
-            Math.abs(maxFriction),
-            vec2.length(collisionForce) * kineticFriction
-          ) * Math.sign(velocityIntoTangent)
+          Math.min(Math.abs(maxFriction), -impulse * kineticFriction) *
+          Math.sign(velocityIntoTangent)
         vec2.scaleAndAdd(
           collisionForce,
           collisionForce,
@@ -732,7 +726,7 @@ function collisionsCircleCircle(a, b) {
  * @return {Vector[]}
  */
 function collisionsCirclePoly(circle, poly) {
-  const points = getPoints(poly)
+  const points = absolutePoints(poly)
   const collisions = []
 
   for (let index = 0; index < points.length; index++) {
@@ -762,8 +756,8 @@ function collisionsCirclePoly(circle, poly) {
 function collisionsPolyPoly(a, b) {
   /** @type {[Vector, number, number, number][]} [point, aIndex, bIndex, angleFromCenter][] */
   const intersections = []
-  const aPoints = getPoints(a)
-  const bPoints = getPoints(b)
+  const aPoints = absolutePoints(a)
+  const bPoints = absolutePoints(b)
   const aLength = aPoints.length
   const bLength = bPoints.length
   const aInsideB = []
@@ -895,7 +889,7 @@ function lineIntersection(a1x, a1y, a2x, a2y, b1x, b1y, b2x, b2y) {
  * @param {PhysicalBody} body
  * @returns {Vector[]}
  */
-function getPoints(body) {
+function absolutePoints(body) {
   if (body.absolutePointsTime !== STATE.time) {
     for (let i = 0; i < body.points.length; i++) {
       const point = body.points[i]
@@ -916,7 +910,7 @@ function getPoints(body) {
  * @param {number} pastWeight
  * @returns {number}
  */
-function smooth(prev, curr, pastWeight = 0.95) {
+function smooth(prev, curr, pastWeight = 0.99) {
   return prev * pastWeight + curr * (1 - pastWeight)
 }
 
