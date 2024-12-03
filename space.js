@@ -554,7 +554,11 @@ const _tick = debugTimer("tick", function () {
           pointRelativeVelocity
         )
 
-        const separationForce = collisionDepth / (1 / a.mass + 1 / b.mass)
+        const separationTime = timeInc * 10
+        const maxSeparationForce = -0.5
+        const separationForce =
+          Math.max(collisionDepth / separationTime, maxSeparationForce) /
+          (1 / a.mass + 1 / b.mass)
         vec2.scaleAndAdd(
           collisionForce,
           collisionForce,
