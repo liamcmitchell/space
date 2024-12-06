@@ -1,10 +1,9 @@
-/// <reference types="gl-matrix" />
-/// <reference types="twgl.js" />
+/// <reference types="./typings.d.ts" />
 
-const twgl = /** @type {import("twgl.js")} */ (window.twgl)
-const { mat3, vec2, glMatrix } = /** @type {import("gl-matrix")} */ (
-  window.glMatrix
-)
+const {
+  twgl,
+  glMatrix: { mat3, vec2, glMatrix },
+} = window
 
 glMatrix.setMatrixArrayType(Array)
 
@@ -49,9 +48,9 @@ function debugSlider(label, value) {
   document.getElementById("debug").appendChild(debugLine)
   const slider = document.createElement("input")
   slider.type = "range"
-  slider.min = 0
-  slider.max = 2
-  slider.step = 0.01
+  slider.min = "0"
+  slider.max = "2"
+  slider.step = "0.01"
   slider.value = value
   debugLine.appendChild(slider)
 
@@ -73,87 +72,17 @@ const debugLine = [
   [0, 0],
   [1, 0],
 ]
+
 function debugPoints(color, origin, offset) {
   if (!debug) return
 
   STATE.debugPoints.push({ color, origin, offset })
 }
 
-/**
- * @typedef {[number, number]} Vector
- */
-
-/**
- * @typedef {object} Thruster
- * @prop {Vector} location
- * @prop {number} angle
- * @prop {number} force
- * @prop {boolean} on
- * @prop {(boolean) => void} noise
- * @prop {string} key
- * @prop {string} touch
- */
-
-/**
- * @typedef {object} Ship
- * @prop {number} mass
- * @prop {number} inertia
- * @prop {Vector} location
- * @prop {Vector} velocity
- * @prop {number} angle
- * @prop {number} angularVelocity
- * @prop {Thruster[]} thrusters
- * @prop {number} health
- * @prop {boolean} destroyed
- * @prop {number} destroyedFor
- */
-
-/**
- * @typedef {object} System
- * @prop {number} mass
- * @prop {number} orbitRadius
- * @prop {System[]} [children]
- */
-
-/**
- * @typedef {object} SystemBody
- * @prop {number} mass
- * @prop {number} radius
- * @prop {Vector} location
- * @prop {Vector} velocity
- */
-
-/**
- * @typedef {object} PhysicalBody
- * @prop {'circle' | 'poly'} type
- * @prop {boolean} fixed
- * @prop {number} mass
- * @prop {number} radius
- * @prop {Vector} location
- * @prop {Vector} velocity
- * @prop {Vector} force
- * @prop {number} angle
- * @prop {number} angularVelocity
- * @prop {number} torque
- * @prop {number} inertia
- * @prop {Vector[]} [points]
- */
-
-/**
- * @typedef {object} State
- * @prop {boolean} running
- * @prop {boolean} rendered
- * @prop {number} time
- * @prop {number} timeInc
- * @prop {number} zoom
- * @prop {PhysicalBody[]} bodies
- * @prop {Ship} ship
- */
-
-/** @type {Vector} */
+/** @type {Vec2} */
 const center = [0, 0]
 
-/** @type {Vector[]} */
+/** @type {Vec2[]} */
 const shipBody = [
   [0, 0],
   [-1, -1],
@@ -161,11 +90,13 @@ const shipBody = [
   [-1, 1],
 ]
 
-const shipRadius = Math.max(
-  ...shipBody.map((point) => vec2.distance(point, center))
-)
+function pointsRadius(points) {
+  return Math.max(...points.map((point) => vec2.distance(point, center)))
+}
 
-/** @type {Vector[]} */
+const shipRadius = pointsRadius(shipBody)
+
+/** @type {Vec2[]} */
 const shipThrust = [
   [1, 0],
   [0, -0.5],
@@ -175,12 +106,14 @@ const shipThrust = [
 const shipStrength = 20
 
 /** @type {State} */
+// @ts-ignore
 const STATE = {
   running: document.hasFocus(),
+  timeInc: 1 / 100,
 }
 
 /** @type {System} */
-const SYSTEM = {
+const system = {
   mass: 10000,
   orbitRadius: 0,
   children: [
@@ -219,113 +152,133 @@ const SYSTEM = {
   ],
 }
 
+/**
+ * @param {Partial<DynamicBody>} input
+ * @returns {DynamicBody}
+ */
+function dynamicBody(input) {
+  const points = input.points
+  const body = {}
+  body.fixed = Boolean(input.fixed)
+  body.mass = input.mass ?? 1
+  body.massInverted = 1 / body.mass
+  body.location = input.location ?? vec2.create()
+  body.velocity = input.velocity ?? vec2.create()
+  body.force = vec2.create()
+  body.inertia = input.inertia ?? Infinity
+  body.angle = input.angle ?? 0
+  body.angularVelocity = input.angularVelocity ?? 0
+  body.torque = 0
+  body.radius = input.radius ?? (points ? pointsRadius(points) : 1)
+  /** @type {BodyType} */
+  body.type = input.type ?? points ? "poly" : "circle"
+  body.points = points
+  body.absolutePoints = input.absolutePoints ?? body.points?.map(() => [0, 0])
+  body.absolutePointsTime = -1
+  for (const key in input) {
+    if (!Object.hasOwn(body, key)) {
+      body[key] = input[key]
+    }
+  }
+  return body
+}
+
 function reset() {
   STATE.rendered = false
   STATE.time = 0
-  STATE.timeInc = 1 / 100
   STATE.zoom = 20
   STATE.bodies = []
-  setSystemBodies(SYSTEM, STATE.time, STATE.bodies)
+  setSystemBodies(system, STATE.time, STATE.bodies)
   const bodyToStartOn = STATE.bodies[5]
-  STATE.ship = {
-    type: "poly",
-    mass: 1,
-    radius: shipRadius,
-    inertia: (2 * 1 * shipRadius ** 2) / 5,
-    location: vec2.add([0, 0], bodyToStartOn.location, [
-      1,
-      bodyToStartOn.radius + shipRadius - 1,
-    ]),
-    velocity: [...bodyToStartOn.velocity],
-    angle: Math.PI / 2,
-    angularVelocity: 0,
-    health: 1,
-    points: shipBody,
-    thrusters: [
-      {
-        location: [0, 0],
-        angle: Math.PI,
-        force: 0.5,
-        key: "ArrowUp",
-        touch: "center",
-      },
-      {
-        location: [1.5, 0],
-        angle: Math.PI / 2,
-        force: 0.2,
-        key: "ArrowRight",
-        touch: "right",
-      },
-      {
-        location: [1.5, 0],
-        angle: -Math.PI / 2,
-        force: 0.2,
-        key: "ArrowLeft",
-        touch: "left",
-      },
-    ],
-  }
-  STATE.ship.thrusters.forEach((thruster) => {
-    thruster.on = false
-    thruster.noise = createThrusterSource(50 / thruster.force, thruster.force)
-    thruster.transform = createTransform(
-      thruster.angle,
-      thruster.location,
-      thruster.force * 2
-    )
-  })
+  STATE.ship = Object.assign(
+    dynamicBody({
+      mass: 1,
+      radius: shipRadius,
+      inertia: (2 * 1 * shipRadius ** 2) / 5,
+      location: vec2.add([0, 0], bodyToStartOn.location, [
+        1,
+        bodyToStartOn.radius + shipRadius - 1,
+      ]),
+      velocity: vec2.clone(bodyToStartOn.velocity),
+      angle: Math.PI / 2,
+      points: shipBody,
+    }),
+    {
+      health: 1,
+      destroyed: false,
+      destroyedFor: 0,
+      thrusters: [
+        {
+          location: vec2.fromValues(0, 0),
+          angle: Math.PI,
+          force: 0.5,
+          key: "ArrowUp",
+          touch: "center",
+        },
+        {
+          location: vec2.fromValues(1.5, 0),
+          angle: Math.PI / 2,
+          force: 0.2,
+          key: "ArrowRight",
+          touch: "right",
+        },
+        {
+          location: vec2.fromValues(1.5, 0),
+          angle: -Math.PI / 2,
+          force: 0.2,
+          key: "ArrowLeft",
+          touch: "left",
+        },
+      ].map((thruster) => ({
+        ...thruster,
+        on: false,
+        noise: createThrusterSource(50 / thruster.force, thruster.force),
+        transform: createTransform(
+          thruster.angle,
+          thruster.location,
+          thruster.force * 2
+        ),
+      })),
+    }
+  )
   STATE.bodies.push(STATE.ship)
   for (const start of createCirclePositions(40, 10)) {
-    STATE.bodies.push({
-      type: "poly",
-      mass: 0.5,
-      radius: 1,
-      points: createCirclePositions(3 + (STATE.bodies.length % 4), 1),
-      inertia: (2 * 1 * 2 ** 2) / 5,
-      location: vec2.add([0, 0], bodyToStartOn.location, start),
-      velocity: [...bodyToStartOn.velocity],
-      angle: STATE.bodies.length,
-      angularVelocity: 0,
-      health: 1,
-    })
+    STATE.bodies.push(
+      dynamicBody({
+        mass: 0.5,
+        radius: 1,
+        points: createCirclePositions(3 + (STATE.bodies.length % 4), 1),
+        inertia: (2 * 1 * 2 ** 2) / 5,
+        location: vec2.add([0, 0], bodyToStartOn.location, start),
+        velocity: vec2.clone(bodyToStartOn.velocity),
+        angle: STATE.bodies.length,
+      })
+    )
   }
   for (const start of createCirclePositions(30, 6)) {
-    STATE.bodies.push({
-      type: "poly",
-      mass: 0.5,
-      radius: 1,
-      points: createCirclePositions(3 + (STATE.bodies.length % 4), 1),
-      inertia: (2 * 1 * 2 ** 2) / 5,
-      location: vec2.add([0, 0], bodyToStartOn.location, start),
-      velocity: [...bodyToStartOn.velocity],
-      angle: STATE.bodies.length,
-      angularVelocity: 0,
-      health: 1,
-    })
+    STATE.bodies.push(
+      dynamicBody({
+        mass: 0.5,
+        radius: 1,
+        points: createCirclePositions(3 + (STATE.bodies.length % 4), 1),
+        inertia: (2 * 1 * 2 ** 2) / 5,
+        location: vec2.add([0, 0], bodyToStartOn.location, start),
+        velocity: vec2.clone(bodyToStartOn.velocity),
+        angle: STATE.bodies.length,
+      })
+    )
   }
   for (const start of createCirclePositions(30, 8)) {
-    STATE.bodies.push({
-      type: "circle",
-      mass: 0.5,
-      radius: 0.5,
-      inertia: (2 * 1 * 0.5 ** 2) / 5,
-      location: vec2.add([0, 0], bodyToStartOn.location, start),
-      velocity: [...bodyToStartOn.velocity],
-      angle: 0,
-      angularVelocity: 0,
-      health: 1,
-    })
+    STATE.bodies.push(
+      dynamicBody({
+        mass: 0.5,
+        radius: 0.5,
+        inertia: (2 * 1 * 0.5 ** 2) / 5,
+        location: vec2.add([0, 0], bodyToStartOn.location, start),
+        velocity: vec2.clone(bodyToStartOn.velocity),
+      })
+    )
   }
-  STATE.bodies.forEach((body) => {
-    body.inertia ??= Infinity
-    body.angle ??= 0
-    body.angularVelocity ??= 0
-    body.force = [0, 0]
-    body.torque = 0
-    body.points = body.points?.map((point) => [...point])
-    body.absolutePoints = body.points?.map(() => [0, 0])
-    body.absolutePointsTime = -1
-  })
 }
 
 function createCirclePositions(stops, radius = 1) {
@@ -356,37 +309,35 @@ function orbitVelocity(parentMass, childMass, radius) {
 /**
  * @param {System} system
  * @param {number} time
- * @param {SystemBody[]} bodies
+ * @param {DynamicBody[]} bodies
  * @param {number} [index]
- * @param {SystemBody} [parent]
+ * @param {DynamicBody} [parent]
  */
 function setSystemBodies(system, time, bodies, index = 0, parent) {
   let total = 1
 
   if (!bodies[index]) {
-    bodies[index] = {
-      type: "circle",
+    bodies[index] = dynamicBody({
       fixed: true,
       mass: system.mass,
       radius: bodyRadius(system.mass),
-      location: [0, 0],
-      velocity: [0, 0],
       orbitRadius: system.orbitRadius,
       orbitCenter: parent?.location,
       landed: false,
-    }
-  }
+    })
 
-  const body = bodies[index]
-
-  if (parent) {
-    if (!system.orbitVelocity) {
+    if (!system.orbitVelocity && parent) {
       system.orbitVelocity = orbitVelocity(
         parent.mass,
         totalMass(system),
         system.orbitRadius
       )
     }
+  }
+
+  const body = bodies[index]
+
+  if (parent) {
     const angle = (system.orbitVelocity / system.orbitRadius) * time
     body.location[0] = parent.location[0] + Math.cos(angle) * system.orbitRadius
     body.location[1] = parent.location[1] + Math.sin(angle) * system.orbitRadius
@@ -406,7 +357,7 @@ function setSystemBodies(system, time, bodies, index = 0, parent) {
 /**
  * @param {number} angle
  * @param {number} distance
- * @returns {Vector}
+ * @returns {Vec2}
  */
 function angleVector(angle, distance) {
   return [Math.cos(angle) * distance, Math.sin(angle) * distance]
@@ -462,7 +413,7 @@ const _tick = debugTimer("tick", function () {
 
   const { ship, bodies, time, timeInc } = STATE
 
-  setSystemBodies(SYSTEM, time, bodies)
+  setSystemBodies(system, time, bodies)
 
   if (ship.destroyed) {
     ship.destroyedFor += timeInc
@@ -522,9 +473,9 @@ const _tick = debugTimer("tick", function () {
       const colls = collisions(a, b)
       for (let k = 0; k < colls.length; k++) {
         const {
-          0: contactPoint,
-          1: collisionNormal,
-          2: collisionDepth,
+          point: contactPoint,
+          normal: collisionNormal,
+          depth: collisionDepth,
         } = colls[k]
 
         perpendicular(collisionTangent, collisionNormal)
@@ -679,30 +630,39 @@ const _tick = debugTimer("tick", function () {
 })
 
 /**
- *
- * @param {PhysicalBody} a
- * @param {PhysicalBody} b
- * @return {[Vector[], Vector[], number]}
+ * @param {DynamicBody} a
+ * @param {DynamicBody} b
+ * @return {Collision[]}
  */
 function collisions(a, b) {
   const aType = a.type
   const bType = b.type
-  if (aType === "circle" && bType === "circle")
+  if (aType === "circle" && bType === "circle") {
     return collisionsCircleCircle(a, b)
-  if (aType === "circle" && bType === "poly") return collisionsCirclePoly(a, b)
+  }
+  if (aType === "circle" && bType === "poly") {
+    return collisionsCirclePoly(a, b)
+  }
   if (bType === "circle" && aType === "poly") {
     const collisions = collisionsCirclePoly(b, a)
     for (let i = 0; i < collisions.length; i++) {
-      const collision = collisions[i]
+      const normal = collisions[i].normal
       // Correct normal to a->b.
-      vec2.scale(collision[1], collision[1], -1)
+      vec2.scale(normal, normal, -1)
     }
     return collisions
   }
-  if (aType === "poly" && bType === "poly") return collisionsPolyPoly(a, b)
+  if (aType === "poly" && bType === "poly") {
+    return collisionsPolyPoly(a, b)
+  }
   return []
 }
 
+/**
+ * @param {DynamicBody} a
+ * @param {DynamicBody} b
+ * @return {Collision[]}
+ */
 function collisionsCircleCircle(a, b) {
   const distance = vec2.distance(a.location, b.location)
   const depth = distance - a.radius - b.radius
@@ -716,14 +676,13 @@ function collisionsCircleCircle(a, b) {
   const point = [0, 0]
   vec2.scaleAndAdd(point, a.location, normal, a.radius + depth)
 
-  return [[point, normal, depth]]
+  return [{ point, normal, depth }]
 }
 
 /**
- *
- * @param {PhysicalBody} a
- * @param {PhysicalBody} b
- * @return {Vector[]}
+ * @param {DynamicBody} circle
+ * @param {DynamicBody} poly
+ * @return {Collision[]}
  */
 function collisionsCirclePoly(circle, poly) {
   const points = absolutePoints(poly)
@@ -738,7 +697,11 @@ function collisionsCirclePoly(circle, poly) {
     if (vec2.distance(a, circle.location) < circle.radius) {
       const difference = vec2.subtract([0, 0], a, circle.location)
       const depth = vec2.length(difference) - circle.radius
-      collisions.push([a, vec2.normalize(difference, difference), depth])
+      collisions.push({
+        point: a,
+        normal: vec2.normalize(difference, difference),
+        depth,
+      })
     }
     if (
       closestDistance < circle.radius &&
@@ -746,15 +709,24 @@ function collisionsCirclePoly(circle, poly) {
     ) {
       const difference = vec2.subtract([0, 0], closest, circle.location)
       const depth = vec2.length(difference) - circle.radius
-      collisions.push([closest, vec2.normalize(difference, difference), depth])
+      collisions.push({
+        point: closest,
+        normal: vec2.normalize(difference, difference),
+        depth,
+      })
     }
   }
 
   return collisions
 }
 
+/**
+ * @param {DynamicBody} a
+ * @param {DynamicBody} b
+ * @return {Collision[]}
+ */
 function collisionsPolyPoly(a, b) {
-  /** @type {[Vector, number, number, number][]} [point, aIndex, bIndex, angleFromCenter][] */
+  /** @type {[Vec2, number, number, number][]} [point, aIndex, bIndex, angleFromCenter][] */
   const intersections = []
   const aPoints = absolutePoints(a)
   const bPoints = absolutePoints(b)
@@ -793,7 +765,7 @@ function collisionsPolyPoly(a, b) {
   }
 
   const iLength = intersections.length
-  if (!iLength) return intersections
+  if (!iLength) return []
 
   // Calculate rough center by averaging intersecting points.
   const center = [0, 0]
@@ -849,7 +821,7 @@ function collisionsPolyPoly(a, b) {
   }
   const depth = smallestX - largestX
 
-  return [[center, normal, depth]]
+  return [{ point: center, normal, depth }]
 }
 
 function triangleArea(p1, p2, p3) {
@@ -886,8 +858,8 @@ function lineIntersection(a1x, a1y, a2x, a2y, b1x, b1y, b2x, b2y) {
 
 /**
  *
- * @param {PhysicalBody} body
- * @returns {Vector[]}
+ * @param {DynamicBody} body
+ * @returns {Vec2[]}
  */
 function absolutePoints(body) {
   if (body.absolutePointsTime !== STATE.time) {
@@ -915,11 +887,11 @@ function smooth(prev, curr, pastWeight = 0.99) {
 }
 
 /**
- * @param {Vector} target
- * @param {Vector} a
- * @param {Vector} b
+ * @param {Vec2} target
+ * @param {Vec2} a
+ * @param {Vec2} b
  * @param {number} length
- * @returns {Vector}
+ * @returns {Vec2}
  */
 function closestPointOnLine(target, a, b, length = vec2.distance(a, b)) {
   const dot =
@@ -929,9 +901,9 @@ function closestPointOnLine(target, a, b, length = vec2.distance(a, b)) {
 }
 
 /**
- * @param {Vector} out
- * @param {Vector} in
- * @returns {Vector}
+ * @param {Vec2} out
+ * @param {Vec2} a
+ * @returns {Vec2}
  */
 function perpendicular(out, a) {
   const x = a[0]
@@ -942,7 +914,7 @@ function perpendicular(out, a) {
 
 /**
  * Returns angle from x axis.
- * @param {Vector} vector
+ * @param {Vec2} vector
  * @returns {number}
  */
 function vectorAngle(vector) {
@@ -951,8 +923,8 @@ function vectorAngle(vector) {
 
 /**
  * Returns angle from x axis.
- * @param {Vector} p1
- * @param {Vector} p2
+ * @param {Vec2} p1
+ * @param {Vec2} p2
  * @returns {number}
  */
 function lineAngle(p1, p2) {
@@ -963,7 +935,7 @@ function lineAngle(p1, p2) {
  * @typedef {object} Shape
  * @prop {'circle' | 'line'} type
  * @prop {mat3} transform
- * @prop {Vector[]} [points]
+ * @prop {Vec2[]} [points]
  * @prop {number[]} color
  * @prop {boolean} filled
  */
