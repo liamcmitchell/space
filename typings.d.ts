@@ -1,5 +1,4 @@
-import { mat3 } from "gl-matrix"
-import { vec2 } from "gl-matrix"
+import { vec2, mat3 } from "gl-matrix"
 
 declare global {
   interface Window {
@@ -40,7 +39,7 @@ declare global {
     absolutePoints?: Vec2[]
     absolutePointsTime?: number
     orbitCenter?: Vec2
-    orbitRadius?: Vec2
+    orbitRadius?: number
     landed?: boolean
   }
 
