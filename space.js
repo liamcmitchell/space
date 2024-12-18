@@ -79,7 +79,6 @@ function debugPoints(color, origin, offset) {
   STATE.debugPoints.push({ color, origin, offset })
 }
 
-/** @type {Vec2} */
 const center = vec2.create()
 
 /** @type {Vec2[]} */
@@ -156,23 +155,27 @@ const system = {
  * @returns {DynamicBody}
  */
 function dynamicBody(input) {
-  const points = input.points
+  const { points, radius, inertia } = input.points
+    ? pointsInfo(input.points)
+    : {}
   const body = {}
   body.fixed = Boolean(input.fixed)
+  body.radius = radius ?? input.radius ?? 1
   body.mass = input.mass ?? 1
-  body.massInverted = 1 / body.mass
+  body.inertia = inertia
+    ? inertia * body.mass
+    : (body.mass * body.radius ** 2) / 2
   body.location = input.location ?? vec2.create()
   body.velocity = input.velocity ?? vec2.create()
   body.force = vec2.create()
-  body.inertia = input.inertia ?? Infinity
   body.angle = input.angle ?? 0
   body.angularVelocity = input.angularVelocity ?? 0
   body.torque = 0
-  body.radius = input.radius ?? (points ? pointsRadius(points) : 1)
   /** @type {BodyType} */
   body.type = input.type ?? points ? "poly" : "circle"
   body.points = points
-  body.absolutePoints = input.absolutePoints ?? body.points?.map(() => [0, 0])
+  body.absolutePoints =
+    input.absolutePoints ?? body.points?.map(() => vec2.create())
   body.absolutePointsTime = -1
   for (const key in input) {
     if (!Object.hasOwn(body, key)) {
@@ -180,6 +183,54 @@ function dynamicBody(input) {
     }
   }
   return body
+}
+
+/**
+ * @param {Vec2[]} points
+ */
+function pointsInfo(points) {
+  const center = vec2.create()
+  let area = 0
+  /** @type {{subCenter: Vec2, subArea: number, subInertia: number}[]} */
+  const components = []
+
+  for (let i = 1; i < points.length - 1; i++) {
+    const p1 = points[0]
+    const p2 = points[i]
+    const p3 = points[i + 1]
+    const subArea = triangleArea(p1, p2, p3) || 0.000001
+    const subCenter = vec2.create()
+    const subInertia =
+      ((vec2.distance(p1, p2) ** 2 +
+        vec2.distance(p2, p3) ** 2 +
+        vec2.distance(p3, p1) ** 2) *
+        subArea) /
+      36
+    triangleCenter(subCenter, p1, p2, p3)
+    components.push({ subCenter, subArea, subInertia })
+    area += subArea
+    vec2.scaleAndAdd(center, center, subCenter, subArea)
+  }
+  vec2.scale(center, center, 1 / area)
+
+  const radius = Math.max(
+    ...points.map((point) => vec2.distance(point, center))
+  )
+
+  const inertia = components.reduce(
+    (acc, { subCenter, subArea, subInertia }) =>
+      acc + subInertia + subArea * vec2.sqrDist(center, subCenter),
+    0
+  )
+
+  return {
+    radius,
+    inertia,
+    points:
+      vec2.length(center) < 0.01
+        ? points
+        : points.map((point) => vec2.subtract(vec2.create(), point, center)),
+  }
 }
 
 function reset() {
@@ -192,9 +243,7 @@ function reset() {
   STATE.ship = Object.assign(
     dynamicBody({
       mass: 1,
-      radius: shipRadius,
-      inertia: (2 * 1 * shipRadius ** 2) / 5,
-      location: vec2.add([0, 0], bodyToStartOn.location, [
+      location: vec2.add(vec2.create(), bodyToStartOn.location, [
         1,
         bodyToStartOn.radius + shipRadius - 1,
       ]),
@@ -245,10 +294,8 @@ function reset() {
     STATE.bodies.push(
       dynamicBody({
         mass: 0.5,
-        radius: 1,
         points: createCirclePositions(3 + (STATE.bodies.length % 4), 1),
-        inertia: (2 * 1 * 2 ** 2) / 5,
-        location: vec2.add([0, 0], bodyToStartOn.location, start),
+        location: vec2.add(vec2.create(), bodyToStartOn.location, start),
         velocity: vec2.clone(bodyToStartOn.velocity),
         angle: STATE.bodies.length,
       })
@@ -258,10 +305,8 @@ function reset() {
     STATE.bodies.push(
       dynamicBody({
         mass: 0.5,
-        radius: 1,
         points: createCirclePositions(3 + (STATE.bodies.length % 4), 1),
-        inertia: (2 * 1 * 2 ** 2) / 5,
-        location: vec2.add([0, 0], bodyToStartOn.location, start),
+        location: vec2.add(vec2.create(), bodyToStartOn.location, start),
         velocity: vec2.clone(bodyToStartOn.velocity),
         angle: STATE.bodies.length,
       })
@@ -272,21 +317,28 @@ function reset() {
       dynamicBody({
         mass: 0.5,
         radius: 0.5,
-        inertia: (2 * 1 * 0.5 ** 2) / 5,
-        location: vec2.add([0, 0], bodyToStartOn.location, start),
+        location: vec2.add(vec2.create(), bodyToStartOn.location, start),
         velocity: vec2.clone(bodyToStartOn.velocity),
       })
     )
   }
 }
 
+const circles = new Map()
 function createCirclePositions(stops, radius = 1) {
-  return Array.from({ length: stops }, (_, i) =>
-    vec2.fromValues(
-      radius * Math.cos((i * 2 * Math.PI) / stops),
-      radius * Math.sin((i * 2 * Math.PI) / stops)
+  const key = `${stops},${radius}`
+  if (!circles.has(key)) {
+    circles.set(
+      key,
+      Array.from({ length: stops }, (_, i) =>
+        vec2.fromValues(
+          radius * Math.cos((i * 2 * Math.PI) / stops),
+          radius * Math.sin((i * 2 * Math.PI) / stops)
+        )
+      )
     )
-  )
+  }
+  return circles.get(key)
 }
 
 /**
@@ -749,7 +801,7 @@ function collisionsCirclePoly(circle, poly) {
 
   if (intersections.length < 3) return []
 
-  // Calculate actual curve points.
+  // Replace placeholder with actual curve points.
   for (let i = 0; i < intersections.length; i++) {
     const intersection = intersections[i]
     if (intersection[1] == 2) {
@@ -801,7 +853,7 @@ function collisionsCirclePoly(circle, poly) {
  * @return {Collision[]}
  */
 function collisionsPolyPoly(a, b) {
-  /** @type {[Vec2, number, number, number][]} [point, aIndex, bIndex, angleFromCenter][] */
+  /** @type {{point: Vec2, ai: number, bi: number, angle: number}[]} */
   const intersections = []
   const aPoints = absolutePoints(a)
   const bPoints = absolutePoints(b)
@@ -818,7 +870,7 @@ function collisionsPolyPoly(a, b) {
       const { 0: b2x, 1: b2y } = bPoints[(bi + 1) % bLength]
       const point = lineIntersection(a1x, a1y, a2x, a2y, b1x, b1y, b2x, b2y)
       if (point) {
-        intersections.push([point, ai, bi, 0])
+        intersections.push({ point, ai, bi, angle: 0 })
       }
       if (linePointSideCheck(a1x, a1y, b1x, b1y, b2x, b2y)) {
         aInsideB[ai] = !aInsideB[ai]
@@ -830,12 +882,12 @@ function collisionsPolyPoly(a, b) {
   }
   for (let ai = 0; ai < aLength; ai++) {
     if (aInsideB[ai]) {
-      intersections.push([aPoints[ai], ai, -1, 0])
+      intersections.push({ point: aPoints[ai], ai, bi: -1, angle: 0 })
     }
   }
   for (let bi = 0; bi < bLength; bi++) {
     if (bInsideA[bi]) {
-      intersections.push([bPoints[bi], -1, bi, 0])
+      intersections.push({ point: bPoints[bi], ai: -1, bi, angle: 0 })
     }
   }
 
@@ -845,22 +897,23 @@ function collisionsPolyPoly(a, b) {
   // Calculate rough center by averaging intersecting points.
   const center = vec2.create()
   for (let i = 0; i < iLength; i++) {
-    vec2.add(center, center, intersections[i][0])
+    vec2.add(center, center, intersections[i].point)
   }
   vec2.scale(center, center, 1 / iLength)
 
   // Calculate angle to rough center.
   for (let i = 0; i < iLength; i++) {
-    intersections[i][3] = lineAngle(center, intersections[i][0])
+    const intersection = intersections[i]
+    intersection.angle = lineAngle(center, intersection.point)
   }
   // Sort by angle (counter-clockwise).
-  intersections.sort((a, b) => a[3] - b[3])
+  intersections.sort((a, b) => a.angle - b.angle)
 
   // Calculate normal by adding all A lines and subtracting all B.
   const normal = vec2.create()
   for (let i = 0; i < iLength; i++) {
-    const { 0: p1, 1: p1a, 2: p1b } = intersections[i]
-    const { 0: p2, 1: p2a, 2: p2b } = intersections[(i + 1) % iLength]
+    const { point: p1, ai: p1a, bi: p1b } = intersections[i]
+    const { point: p2, ai: p2a, bi: p2b } = intersections[(i + 1) % iLength]
     const isA = p1b === -1 || p2b === -1 || (p1a !== -1 && p1a === p2a)
     vec2.add(normal, normal, isA ? p1 : p2)
     vec2.subtract(normal, normal, isA ? p2 : p1)
@@ -873,9 +926,9 @@ function collisionsPolyPoly(a, b) {
   const subCenter = vec2.create()
   let area = 0
   for (let i = 1; i < iLength - 1; i++) {
-    const p1 = intersections[0][0]
-    const p2 = intersections[i][0]
-    const p3 = intersections[i + 1][0]
+    const p1 = intersections[0].point
+    const p2 = intersections[i].point
+    const p3 = intersections[i + 1].point
     const subArea = triangleArea(p1, p2, p3) || 0.000001
     triangleCenter(subCenter, p1, p2, p3)
     area += subArea
@@ -888,7 +941,7 @@ function collisionsPolyPoly(a, b) {
   let largestX = -Infinity
   const normalAngle = vectorAngle(normal)
   for (let i = 0; i < iLength; i++) {
-    const point = intersections[i][0]
+    const point = intersections[i].point
     const rotatedX =
       point[0] * Math.cos(-normalAngle) - point[1] * Math.sin(-normalAngle)
     smallestX = Math.min(rotatedX, smallestX)
