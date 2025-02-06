@@ -9,6 +9,15 @@ glMatrix.setMatrixArrayType(Array)
 
 const debug = location.hash === "#debug"
 
+function test(fn) {
+  if (debug) fn()
+}
+
+function assert(message, received, expected) {
+  if (received != expected)
+    throw new Error(`${message}: received ${received} but expected ${expected}`)
+}
+
 function debugValue(key, value) {
   if (!debug) return
 
@@ -155,13 +164,13 @@ const system = {
  * @returns {DynamicBody}
  */
 function dynamicBody(input) {
-  const { points, radius, inertia } = input.points
+  const { area, points, radius, inertia } = input.points
     ? pointsInfo(input.points)
     : {}
   const body = {}
   body.fixed = Boolean(input.fixed)
   body.radius = radius ?? input.radius ?? 1
-  body.mass = input.mass ?? 1
+  body.mass = input.mass ?? area ?? Math.PI * body.radius ** 2
   body.inertia = inertia
     ? inertia * body.mass
     : (body.mass * body.radius ** 2) / 2
@@ -201,9 +210,9 @@ function pointsInfo(points) {
     const subArea = triangleArea(p1, p2, p3) || 0.000001
     const subCenter = vec2.create()
     const subInertia =
-      ((vec2.distance(p1, p2) ** 2 +
-        vec2.distance(p2, p3) ** 2 +
-        vec2.distance(p3, p1) ** 2) *
+      ((vec2.squaredDistance(p1, p2) +
+        vec2.squaredDistance(p2, p3) +
+        vec2.squaredDistance(p3, p1)) *
         subArea) /
       36
     triangleCenter(subCenter, p1, p2, p3)
@@ -224,6 +233,7 @@ function pointsInfo(points) {
   )
 
   return {
+    area,
     radius,
     inertia,
     points:
@@ -242,7 +252,6 @@ function reset() {
   const bodyToStartOn = STATE.bodies[5]
   STATE.ship = Object.assign(
     dynamicBody({
-      mass: 1,
       location: vec2.add(vec2.create(), bodyToStartOn.location, [
         1,
         bodyToStartOn.radius + shipRadius - 1,
@@ -259,21 +268,21 @@ function reset() {
         {
           location: vec2.fromValues(-1, 0),
           angle: Math.PI,
-          force: 0.5,
+          force: 3,
           key: "ArrowUp",
           touch: "center",
         },
         {
           location: vec2.fromValues(1.5, 0),
           angle: Math.PI / 2,
-          force: 0.2,
+          force: 1,
           key: "ArrowRight",
           touch: "right",
         },
         {
           location: vec2.fromValues(1.5, 0),
           angle: -Math.PI / 2,
-          force: 0.2,
+          force: 1,
           key: "ArrowLeft",
           touch: "left",
         },
@@ -284,7 +293,7 @@ function reset() {
         transform: createTransform(
           thruster.angle,
           thruster.location,
-          thruster.force * 2
+          Math.sqrt(thruster.force) / 2
         ),
       })),
     }
@@ -293,18 +302,6 @@ function reset() {
   for (const start of createCirclePositions(40, 10)) {
     STATE.bodies.push(
       dynamicBody({
-        mass: 0.5,
-        points: createCirclePositions(3 + (STATE.bodies.length % 4), 1),
-        location: vec2.add(vec2.create(), bodyToStartOn.location, start),
-        velocity: vec2.clone(bodyToStartOn.velocity),
-        angle: STATE.bodies.length,
-      })
-    )
-  }
-  for (const start of createCirclePositions(30, 6)) {
-    STATE.bodies.push(
-      dynamicBody({
-        mass: 0.5,
         points: createCirclePositions(3 + (STATE.bodies.length % 4), 1),
         location: vec2.add(vec2.create(), bodyToStartOn.location, start),
         velocity: vec2.clone(bodyToStartOn.velocity),
@@ -315,7 +312,16 @@ function reset() {
   for (const start of createCirclePositions(30, 8)) {
     STATE.bodies.push(
       dynamicBody({
-        mass: 0.5,
+        points: createCirclePositions(3 + (STATE.bodies.length % 4), 1),
+        location: vec2.add(vec2.create(), bodyToStartOn.location, start),
+        velocity: vec2.clone(bodyToStartOn.velocity),
+        angle: STATE.bodies.length,
+      })
+    )
+  }
+  for (const start of createCirclePositions(30, 12)) {
+    STATE.bodies.push(
+      dynamicBody({
         radius: 0.5,
         location: vec2.add(vec2.create(), bodyToStartOn.location, start),
         velocity: vec2.clone(bodyToStartOn.velocity),
@@ -586,11 +592,12 @@ const _tick = debugTimer("tick", function () {
 
         if (velocityIntoNormal < 0 && (a === ship || b === ship)) {
           const body = a === ship ? b : a
-          if (impulse < -0.3) {
-            const volume = 1 - 1 / (0.05 * -impulse + 1) ** 2
+          const relativeImpulse = impulse / ship.mass
+          if (relativeImpulse < -0.3) {
+            const volume = 1 - 1 / (0.05 * -relativeImpulse + 1) ** 2
             collisionNoise(volume)
           }
-          ship.health -= Math.max(0, (-impulse - 2) / shipStrength)
+          ship.health -= Math.max(0, (-relativeImpulse - 2) / shipStrength)
           if (ship.health <= 0 && !ship.destroyed) {
             ship.destroyed = true
             ship.destroyedFor = 0
@@ -952,9 +959,17 @@ function collisionsPolyPoly(a, b) {
   return [{ point: center, normal, depth }]
 }
 
+// https://en.wikipedia.org/wiki/Area_of_a_triangle#Using_coordinates
 function triangleArea(p1, p2, p3) {
-  return (p2[0] - p1[0]) * (p3[1] - p1[1]) - (p2[1] - p1[1]) * (p3[0] - p1[0])
+  return (
+    0.5 *
+    ((p2[0] - p1[0]) * (p3[1] - p1[1]) - (p2[1] - p1[1]) * (p3[0] - p1[0]))
+  )
 }
+
+test(() => {
+  assert("half of square", triangleArea([0, 0], [1, 0], [0, 1]), 0.5)
+})
 
 function triangleCenter(out, p1, p2, p3) {
   vec2.lerp(out, p2, p3, 0.5)
