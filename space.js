@@ -748,7 +748,7 @@ function collisionsCirclePoly(circle, poly) {
   const cx = location[0]
   const cy = location[1]
   const points = absolutePoints(poly)
-  /** @type {[Vec2, number][]} */
+  /** @type {Vec2[]} */
   const intersections = []
 
   for (let index = 0; index < points.length; index++) {
@@ -757,7 +757,7 @@ function collisionsCirclePoly(circle, poly) {
 
     const aInside = vec2.distance(a, location) < radius
     if (aInside) {
-      intersections.push([a, 0])
+      intersections.push(a)
     }
 
     // https://mathworld.wolfram.com/Circle-LineIntersection.html
@@ -789,18 +789,18 @@ function collisionsCirclePoly(circle, poly) {
       // We add a placeholder here and calculate the real position when we have all points.
       if (!aInside && i1Intersecting && i2Intersecting) {
         // entering and exiting
-        intersections.push([vec2.create(), 2])
-        intersections.push([i1Closer ? i1 : i2, 1])
-        intersections.push([i1Closer ? i2 : i1, -1])
+        intersections.push(vec2.create())
+        intersections.push(i1Closer ? i1 : i2)
+        intersections.push(i1Closer ? i2 : i1)
       } else if (i1Intersecting || i2Intersecting) {
         const next = i1Intersecting ? i1 : i2
         if (!aInside) {
           // entering
-          intersections.push([vec2.create(), 2])
-          intersections.push([next, 1])
+          intersections.push(vec2.create())
+          intersections.push(next)
         } else {
           // exiting
-          intersections.push([next, -1])
+          intersections.push(next)
         }
       }
     }
@@ -808,13 +808,12 @@ function collisionsCirclePoly(circle, poly) {
 
   if (intersections.length < 3) return []
 
-  // Replace placeholder with actual curve points.
+  // Replace placeholders with actual curve points.
   for (let i = 0; i < intersections.length; i++) {
-    const intersection = intersections[i]
-    if (intersection[1] == 2) {
-      const point = intersection[0]
-      const p1 = intersections.at(i - 1)[0]
-      const p2 = intersections.at(i + 1)[0]
+    const point = intersections[i]
+    if (point[0] === 0 && point[1] === 0) {
+      const p1 = intersections.at(i - 1)
+      const p2 = intersections.at(i + 1)
       const angle1 = vectorAngle(vec2.subtract(point, location, p1))
       const angle2 = vectorAngle(vec2.subtract(point, location, p2))
       const curveAngle = angleDifference(angle1, angle2)
@@ -827,9 +826,9 @@ function collisionsCirclePoly(circle, poly) {
   const subCenter = vec2.create()
   let area = 0
   for (let i = 1; i < intersections.length - 1; i++) {
-    const p1 = intersections[0][0]
-    const p2 = intersections[i][0]
-    const p3 = intersections[i + 1][0]
+    const p1 = intersections[0]
+    const p2 = intersections[i]
+    const p3 = intersections[i + 1]
     const subArea = triangleArea(p1, p2, p3) || 0.000001
     triangleCenter(subCenter, p1, p2, p3)
     area += subArea
@@ -843,7 +842,7 @@ function collisionsCirclePoly(circle, poly) {
   let smallestX = Infinity
   let largestX = -Infinity
   for (let i = 0; i < intersections.length; i++) {
-    const point = intersections[i][0]
+    const point = intersections[i]
     const rotatedX =
       point[0] * Math.cos(-normalAngle) - point[1] * Math.sin(-normalAngle)
     smallestX = Math.min(rotatedX, smallestX)
