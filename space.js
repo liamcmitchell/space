@@ -7,10 +7,12 @@ const {
 
 glMatrix.setMatrixArrayType(Array)
 
-const debug = location.hash === "#debug"
+const timeInc = 1 / 100
+
+const debug = location.hash.startsWith("#debug")
 
 function test(fn) {
-  if (debug) fn()
+  if (debug) setTimeout(fn)
 }
 
 function assert(message, received, expected) {
@@ -75,6 +77,7 @@ const colors = {
   green: [0, 1, 0, 1],
   blue: [0, 0, 1, 1],
   yellow: [1, 1, 0, 1],
+  orange: [1, 0.5, 0, 1],
 }
 
 const debugLine = [
@@ -97,12 +100,6 @@ const shipBody = [
   [-1, 1],
 ]
 
-function pointsRadius(points) {
-  return Math.max(...points.map((point) => vec2.distance(point, center)))
-}
-
-const shipRadius = pointsRadius(shipBody)
-
 /** @type {Vec2[]} */
 const shipThrust = [
   [1, 0],
@@ -116,7 +113,6 @@ const shipStrength = 20
 // @ts-ignore
 const STATE = {
   running: document.hasFocus(),
-  timeInc: 1 / 100,
 }
 
 /** @type {System} */
@@ -164,13 +160,15 @@ const system = {
  * @returns {DynamicBody}
  */
 function dynamicBody(input) {
-  const { area, points, radius, inertia } = input.points
-    ? pointsInfo(input.points)
+  const { area, points, radius, inertia, offset } = input.points
+    ? pointsInfo(input.points, input.scale)
     : {}
   const body = {}
   body.fixed = Boolean(input.fixed)
   body.radius = radius ?? input.radius ?? 1
   body.mass = input.mass ?? area ?? Math.PI * body.radius ** 2
+  body.health = input.health ?? 1
+  body.destroyed = input.destroyed ?? 0
   body.inertia = inertia
     ? inertia * body.mass
     : (body.mass * body.radius ** 2) / 2
@@ -183,6 +181,7 @@ function dynamicBody(input) {
   /** @type {BodyType} */
   body.type = input.type ?? points ? "poly" : "circle"
   body.points = points
+  body.scale = input.scale ?? 1
   body.absolutePoints =
     input.absolutePoints ?? body.points?.map(() => vec2.create())
   body.absolutePointsTime = -1
@@ -191,13 +190,19 @@ function dynamicBody(input) {
       body[key] = input[key]
     }
   }
+  // If points were normalized, move location to match offset.
+  if (offset) {
+    vec2.rotate(offset, offset, center, body.angle)
+    vec2.scaleAndAdd(body.location, body.location, offset, body.scale)
+  }
   return body
 }
 
 /**
  * @param {Vec2[]} points
+ * @param {number} scale
  */
-function pointsInfo(points) {
+function pointsInfo(points, scale = 1) {
   const center = vec2.create()
   let area = 0
   /** @type {{subCenter: Vec2, subArea: number, subInertia: number}[]} */
@@ -232,99 +237,96 @@ function pointsInfo(points) {
     0
   )
 
+  // Points should always be centered on 0.
+  if (vec2.length(center) > 0.01) {
+    points = points.map((point) => vec2.subtract(vec2.create(), point, center))
+  }
+
   return {
-    area,
-    radius,
-    inertia,
-    points:
-      vec2.length(center) < 0.01
-        ? points
-        : points.map((point) => vec2.subtract(vec2.create(), point, center)),
+    area: area * scale ** 2,
+    radius: radius * scale,
+    inertia: inertia * scale ** 4,
+    offset: center,
+    points,
   }
 }
+
+test(() => {
+  const abs = pointsInfo(createCirclePositions(4, 2))
+  const scaled = pointsInfo(createCirclePositions(4, 1), 2)
+  assert("scaled area is the same", scaled.area, abs.area)
+  assert("scaled inertia is the same", scaled.inertia, abs.inertia)
+})
 
 function reset() {
   STATE.rendered = false
   STATE.time = 0
   STATE.zoom = 20
   STATE.bodies = []
-  setSystemBodies(system, STATE.time, STATE.bodies)
+  setSystemBodies(system, 0, STATE.bodies)
   const bodyToStartOn = STATE.bodies[5]
   STATE.ship = Object.assign(
     dynamicBody({
       location: vec2.add(vec2.create(), bodyToStartOn.location, [
-        1,
-        bodyToStartOn.radius + shipRadius - 1,
+        0,
+        bodyToStartOn.radius + 1,
       ]),
       velocity: vec2.clone(bodyToStartOn.velocity),
       angle: Math.PI / 2,
       points: shipBody,
     }),
     {
-      health: 1,
-      destroyed: false,
-      destroyedFor: 0,
       thrusters: [
         {
           location: vec2.fromValues(-1, 0),
           angle: Math.PI,
-          force: 3,
+          force: 100,
           key: "ArrowUp",
           touch: "center",
         },
         {
           location: vec2.fromValues(1.5, 0),
           angle: Math.PI / 2,
-          force: 1,
+          force: 20,
           key: "ArrowRight",
           touch: "right",
         },
         {
           location: vec2.fromValues(1.5, 0),
           angle: -Math.PI / 2,
-          force: 1,
+          force: 20,
           key: "ArrowLeft",
           touch: "left",
         },
       ].map((thruster) => ({
         ...thruster,
         on: false,
-        noise: createThrusterSource(50 / thruster.force, thruster.force),
+        noise: createThrusterSource(thruster.force),
         transform: createTransform(
           thruster.angle,
           thruster.location,
-          Math.sqrt(thruster.force) / 2
+          Math.sqrt(thruster.force) / 10
         ),
       })),
     }
   )
   STATE.bodies.push(STATE.ship)
-  for (const start of createCirclePositions(40, 10)) {
+
+  const beltRadius = 40
+  const orbitVel = orbitVelocity(bodyToStartOn.mass, 40, beltRadius)
+
+  for (const start of createCirclePositions(40, beltRadius)) {
+    const angle = vectorAngle(start)
     STATE.bodies.push(
       dynamicBody({
-        points: createCirclePositions(3 + (STATE.bodies.length % 4), 1),
+        points: createCirclePositions(3 + (STATE.bodies.length % 5), 1),
+        scale: 3 / ((STATE.bodies.length % 3) + 3),
         location: vec2.add(vec2.create(), bodyToStartOn.location, start),
-        velocity: vec2.clone(bodyToStartOn.velocity),
+        velocity: vec2.add(vec2.create(), bodyToStartOn.velocity, [
+          Math.sin(angle) * -orbitVel,
+          Math.cos(angle) * orbitVel,
+        ]),
         angle: STATE.bodies.length,
-      })
-    )
-  }
-  for (const start of createCirclePositions(30, 8)) {
-    STATE.bodies.push(
-      dynamicBody({
-        points: createCirclePositions(3 + (STATE.bodies.length % 4), 1),
-        location: vec2.add(vec2.create(), bodyToStartOn.location, start),
-        velocity: vec2.clone(bodyToStartOn.velocity),
-        angle: STATE.bodies.length,
-      })
-    )
-  }
-  for (const start of createCirclePositions(30, 12)) {
-    STATE.bodies.push(
-      dynamicBody({
-        radius: 0.5,
-        location: vec2.add(vec2.create(), bodyToStartOn.location, start),
-        velocity: vec2.clone(bodyToStartOn.velocity),
       })
     )
   }
@@ -464,19 +466,13 @@ const _tick = debugTimer("tick", function () {
   STATE.rendered = false
   STATE.debugPoints = []
 
-  if (STATE.ship.destroyed && STATE.ship.destroyedFor > 2) {
+  if (STATE.ship.destroyed && STATE.time - STATE.ship.destroyed > 120) {
     reset()
   }
 
-  STATE.time += STATE.timeInc
+  STATE.time += 1
 
-  const { ship, bodies, time, timeInc } = STATE
-
-  setSystemBodies(system, time, bodies)
-
-  if (ship.destroyed) {
-    ship.destroyedFor += timeInc
-  }
+  const { ship, bodies, time } = STATE
 
   for (let i = 0; i < ship.thrusters.length; i++) {
     const thruster = ship.thrusters[i]
@@ -489,17 +485,15 @@ const _tick = debugTimer("tick", function () {
 
     if (!thruster.on) continue
 
-    vec2.scaleAndAdd(
+    vec2.add(
       ship.force,
       ship.force,
-      angleVector(ship.angle + thruster.angle, -thruster.force),
-      1 / timeInc
+      angleVector(ship.angle + thruster.angle, -thruster.force)
     )
-    ship.torque +=
-      vec2.dot(
-        perpendicular(vec2.create(), thruster.location),
-        angleVector(thruster.angle, -thruster.force)
-      ) / timeInc
+    ship.torque += vec2.dot(
+      perpendicular(vec2.create(), thruster.location),
+      angleVector(thruster.angle, -thruster.force)
+    )
   }
 
   const difference = vec2.create()
@@ -512,10 +506,13 @@ const _tick = debugTimer("tick", function () {
 
   for (let i = 0; i < bodiesLength; i++) {
     const a = bodies[i]
+
+    if (a.destroyed) continue
+
     for (let j = i + 1; j < bodiesLength; j++) {
       const b = bodies[j]
 
-      if (a.fixed && b.fixed) continue
+      if ((a.fixed && b.fixed) || b.destroyed) continue
 
       const distance = vec2.distance(a.location, b.location) || 0.0001
 
@@ -572,11 +569,7 @@ const _tick = debugTimer("tick", function () {
           velocityIntoNormal * (elasticity + 1)
         )
         const separationTime = timeInc * 10
-        const maxSeparationForce = -0.5
-        const separationVelocity = Math.max(
-          collisionDepth / separationTime,
-          maxSeparationForce
-        )
+        const separationVelocity = collisionDepth / separationTime
         const impulse =
           (collisionResponseVelocity + separationVelocity) /
           (1 / a.mass +
@@ -590,29 +583,31 @@ const _tick = debugTimer("tick", function () {
           impulse
         )
 
-        if (velocityIntoNormal < 0 && (a === ship || b === ship)) {
-          const body = a === ship ? b : a
-          const relativeImpulse = impulse / ship.mass
-          if (relativeImpulse < -0.3) {
-            const volume = 1 - 1 / (0.05 * -relativeImpulse + 1) ** 2
-            collisionNoise(volume)
-          }
-          ship.health -= Math.max(0, (-relativeImpulse - 2) / shipStrength)
-          if (ship.health <= 0 && !ship.destroyed) {
-            ship.destroyed = true
-            ship.destroyedFor = 0
-          }
-          if (body.orbitCenter) {
-            body.landed =
-              body.landed ||
-              (Math.abs(ship.angularVelocity) < 1 &&
-                vec2.distance(ship.velocity, body.velocity) < 0.5 &&
-                Math.abs(
-                  angleDifference(
-                    ship.angle,
-                    lineAngle(body.location, ship.location)
-                  )
-                ) < 0.2)
+        if (velocityIntoNormal < 0) {
+          a.health -= Math.max(0, (-impulse - 2) / 20 / a.mass)
+          b.health -= Math.max(0, (-impulse - 2) / 20 / b.mass)
+
+          if (a === ship || b === ship) {
+            const relativeImpulse = impulse / ship.mass
+            const body = a === ship ? b : a
+
+            if (relativeImpulse < -0.3) {
+              const volume = 1 - 1 / (0.05 * -relativeImpulse + 1) ** 2
+              collisionNoise(volume)
+            }
+
+            if (body.orbitCenter) {
+              body.landed =
+                body.landed ||
+                (Math.abs(ship.angularVelocity) < 1 &&
+                  vec2.distance(ship.velocity, body.velocity) < 0.5 &&
+                  Math.abs(
+                    angleDifference(
+                      ship.angle,
+                      lineAngle(body.location, ship.location)
+                    )
+                  ) < 0.2)
+            }
           }
         }
 
@@ -634,10 +629,23 @@ const _tick = debugTimer("tick", function () {
           frictionForce
         )
 
-        vec2.scaleAndAdd(a.force, a.force, collisionForce, 1 / timeInc)
-        a.torque += vec2.dot(aPointPerp, collisionForce) / timeInc
-        vec2.scaleAndAdd(b.force, b.force, collisionForce, -1 / timeInc)
-        b.torque += -vec2.dot(bPointPerp, collisionForce) / timeInc
+        // Collision impulses applied immediately to avoid explosions.
+        vec2.scaleAndAdd(a.velocity, a.velocity, collisionForce, 1 / a.mass)
+        a.angularVelocity += vec2.dot(aPointPerp, collisionForce) / a.inertia
+        vec2.scaleAndAdd(b.velocity, b.velocity, collisionForce, -1 / b.mass)
+        b.angularVelocity += -vec2.dot(bPointPerp, collisionForce) / b.inertia
+      }
+    }
+  }
+
+  for (let i = 0; i < bodies.length; i++) {
+    const body = bodies[i]
+    if (body.health < 0 && !body.destroyed) {
+      body.destroyed = time
+      if (body.mass > 0.3) {
+        const parts = explode(body)
+        bodies[i] = parts[0]
+        bodies.push(...parts.slice(1))
       }
     }
   }
@@ -663,6 +671,8 @@ const _tick = debugTimer("tick", function () {
     }
   }
 
+  setSystemBodies(system, time * timeInc, bodies)
+
   const newZoom = Math.min(
     20,
     100 *
@@ -674,7 +684,7 @@ const _tick = debugTimer("tick", function () {
               : m +
                 (1 /
                   (vec2.distance(ship.location, b.location) -
-                    shipRadius -
+                    ship.radius -
                     b.radius)) **
                   2,
           0
@@ -924,6 +934,9 @@ function collisionsPolyPoly(a, b) {
     vec2.add(normal, normal, isA ? p1 : p2)
     vec2.subtract(normal, normal, isA ? p2 : p1)
   }
+
+  if (normal[0] === 0 && normal[1] === 0) return []
+
   vec2.normalize(normal, normal)
   perpendicular(normal, normal)
 
@@ -935,12 +948,14 @@ function collisionsPolyPoly(a, b) {
     const p1 = intersections[0].point
     const p2 = intersections[i].point
     const p3 = intersections[i + 1].point
-    const subArea = triangleArea(p1, p2, p3) || 0.000001
+    const subArea = triangleArea(p1, p2, p3)
     triangleCenter(subCenter, p1, p2, p3)
     area += subArea
     vec2.scaleAndAdd(center, center, subCenter, subArea)
   }
   vec2.scale(center, center, 1 / area)
+
+  if (area <= 0) return []
 
   // Calculate depth by rotating points to normal and finding smallest/largest x.
   let smallestX = Infinity
@@ -1009,6 +1024,7 @@ function absolutePoints(body) {
       const point = body.points[i]
       const absolutePoint = body.absolutePoints[i]
       vec2.rotate(absolutePoint, point, center, body.angle)
+      vec2.scale(absolutePoint, absolutePoint, body.scale)
       vec2.add(absolutePoint, absolutePoint, body.location)
     }
     body.absolutePointsTime = STATE.time
@@ -1071,6 +1087,67 @@ function vectorAngle(vector) {
  */
 function lineAngle(p1, p2) {
   return Math.atan2(p2[1] - p1[1], p2[0] - p1[0])
+}
+
+/**
+ * @param {DynamicBody} body
+ */
+function explode(body) {
+  if (body.type !== "poly") return [body]
+
+  const { points } = body
+  const parts = []
+
+  if (points.length === 3) {
+    // Split into 4, re-using original points.
+    parts.push(
+      dynamicBody({
+        points,
+        scale: body.scale / 2,
+        location: vec2.clone(body.location),
+        angle: body.angle + Math.PI,
+        angularVelocity: body.angularVelocity,
+      })
+    )
+    const absPoints = absolutePoints(body)
+    for (let i = 0; i < absPoints.length; i++) {
+      parts.push(
+        dynamicBody({
+          points,
+          scale: body.scale / 2,
+          location: vec2.lerp(vec2.create(), body.location, absPoints[i], 0.5),
+          angle: body.angle,
+          angularVelocity: body.angularVelocity,
+        })
+      )
+    }
+  }
+
+  if (parts.length === 0) {
+    for (let i = 0; i < points.length; i++) {
+      // Make triangles from each edge to center.
+      parts.push(
+        dynamicBody({
+          // For symmetrical points, a single points could be re-used and rotated.
+          points: [points.at(i - 1), points[i], center],
+          scale: body.scale,
+          location: vec2.clone(body.location),
+          angle: body.angle,
+          angularVelocity: body.angularVelocity,
+        })
+      )
+    }
+  }
+
+  // Adjust velocity from angularVelocity & offset from center.
+  parts.forEach((bodyPart) => {
+    vec2.subtract(bodyPart.velocity, bodyPart.location, body.location)
+    perpendicular(bodyPart.velocity, bodyPart.velocity)
+    vec2.scale(bodyPart.velocity, bodyPart.velocity, body.angularVelocity)
+    vec2.add(bodyPart.velocity, bodyPart.velocity, body.velocity)
+  })
+
+  return parts
 }
 
 /**
@@ -1146,7 +1223,7 @@ function setupRender() {
       vec3 random = vec3(pcg3d(seed)) / float(0xffffffffu);
       float brightness = pow(random.x, 600.0);
       brightness = brightness * step(minBrightness, brightness);
-      return brightness * ((1.0 - flicker) + (sin((random.y * 6.3) + (time * random.z * 5.0)) * flicker));
+      return brightness * ((1.0 - flicker) + (sin((random.y * 6.3) + (time * random.z / 20.0)) * flicker));
     }
     void main() {
       float closeStars = stars(devicePixelRatio, 0.8, 0.1);
@@ -1307,41 +1384,43 @@ function setupRender() {
         )
       }
       if (body.type === "poly" && body !== ship) {
-        renderPoly(
-          body.points,
-          body.location,
-          body.radius,
-          body.angle,
-          !debug,
-          colors.gray
+        renderPoly(body.points, body.location, body.scale, body.angle, !debug, [
+          0.7,
+          0.7 - (1 - body.health) / 2,
+          body.health * 0.7,
+          !body.destroyed ? 1 : 1 - (STATE.time - body.destroyed) / 120,
+        ])
+      }
+      if (body === ship) {
+        // Keep ship visible when zoomed out.
+        const shipSize = Math.max(1, 10 / Math.max(STATE.idealZoom, STATE.zoom))
+        const shipTransform = createTransform(
+          ship.angle,
+          ship.location,
+          shipSize
+        )
+        mat3.multiply(shipTransform, projection, shipTransform)
+        for (const thruster of ship.thrusters) {
+          if (!thruster.on) continue
+
+          mat3.multiply(view, shipTransform, thruster.transform)
+          renderBufferInfo(
+            createBufferInfoFromArrays(shipThrust),
+            view,
+            colors.yellow,
+            thruster.on
+          )
+        }
+        renderBufferInfo(
+          createBufferInfoFromArrays(ship.points),
+          shipTransform,
+          ship.destroyed
+            ? colors.gray
+            : [1 - ship.health, ship.health * 0.4, 2 * ship.health, 1],
+          true
         )
       }
     })
-
-    // Ship
-    // Keep ship visible when zoomed out.
-    const shipSize = Math.max(1, 10 / Math.max(STATE.idealZoom, STATE.zoom))
-    const shipTransform = createTransform(ship.angle, ship.location, shipSize)
-    mat3.multiply(shipTransform, projection, shipTransform)
-    for (const thruster of ship.thrusters) {
-      if (!thruster.on) continue
-
-      mat3.multiply(view, shipTransform, thruster.transform)
-      renderBufferInfo(
-        createBufferInfoFromArrays(shipThrust),
-        view,
-        colors.yellow,
-        thruster.on
-      )
-    }
-    renderBufferInfo(
-      createBufferInfoFromArrays(ship.points),
-      shipTransform,
-      ship.destroyed
-        ? colors.gray
-        : [1 - ship.health, ship.health * 0.4, 2 * ship.health, 1],
-      true
-    )
 
     STATE.debugPoints?.forEach(({ color, origin, offset }) => {
       if (!offset) {
@@ -1436,7 +1515,12 @@ function createNoise(connectSource) {
   }
 }
 
-function createThrusterSource(frequency, volume) {
+/**
+ * @param {number} force
+ */
+function createThrusterSource(force) {
+  const frequency = 1000 / Math.sqrt(force) + 200
+  const volume = 1 - 1 / (0.1 * force + 1)
   const playNoise = createNoise((amp) => {
     const source = new AudioBufferSourceNode(audioContext, {
       buffer: noiseBuffer,
@@ -1444,20 +1528,19 @@ function createThrusterSource(frequency, volume) {
       loopEnd: noiseDuration,
     })
     const bandpass = new BiquadFilterNode(audioContext, {
-      type: "bandpass",
+      type: "lowpass",
       frequency,
-      Q: 0.5,
-      gain: 0.2,
+      Q: 1,
     })
     source.connect(bandpass).connect(amp)
     source.start()
     return () => {
-      source.stop
+      source.stop()
     }
   })
 
   return function play(on) {
-    playNoise(on ? volume : 0, 0.01, 0.1, 0.1)
+    playNoise(on ? volume : 0, 0.05, 0.1, 0.1)
   }
 }
 
@@ -1468,9 +1551,9 @@ const _collisionNoise = createNoise((amp) => {
     loopEnd: noiseDuration,
   })
   const bandpass = new BiquadFilterNode(audioContext, {
-    type: "bandpass",
-    frequency: 400,
-    Q: 0.5,
+    type: "lowpass",
+    frequency: 1200,
+    Q: 0.8,
   })
   source.connect(bandpass).connect(amp)
   source.start()
@@ -1497,6 +1580,14 @@ document.addEventListener("keydown", (event) => {
       reset()
       tick(true)
       break
+
+    case "p":
+      STATE.running = !STATE.running
+
+    case " ":
+      if (debug && !STATE.running) {
+        tick(true)
+      }
 
     default:
       break

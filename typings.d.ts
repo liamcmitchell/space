@@ -28,6 +28,8 @@ declare global {
     fixed: boolean
     radius: number
     mass: number
+    health: number
+    destroyed: number
     location: Vec2
     velocity: Vec2
     force: Vec2
@@ -36,6 +38,7 @@ declare global {
     angularVelocity: number
     torque: number
     points?: Vec2[]
+    scale: number
     absolutePoints?: Vec2[]
     absolutePointsTime?: number
     orbitCenter?: Vec2
@@ -46,8 +49,6 @@ declare global {
   interface Ship extends DynamicBody {
     thrusters: Thruster[]
     health: number
-    destroyed: boolean
-    destroyedFor: number
   }
 
   interface System {
@@ -67,7 +68,6 @@ declare global {
     running: boolean
     rendered: boolean
     time: number
-    timeInc: number
     zoom: number
     idealZoom: number
     viewRadius: number
